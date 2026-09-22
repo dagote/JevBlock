@@ -1,4 +1,4 @@
-# Adgate 0.1.3 — System One page classify + user ranks
+# Adgate 0.1.4 — System One page classify + user ranks
 
 ## Idea
 
@@ -68,4 +68,4 @@ Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host 
 
 ## Versions
 
-Extension **0.1.3**. Server **0.3.2**. Client page-judge timeout 15 minutes + single-flight; server scores ad-like first and finishes within budget with remapped kinds. Soft remap is classification-only (logs `kindModel`). Force-hide cheats stay off.
+Extension **0.1.4**. Server **0.3.2**. The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off.

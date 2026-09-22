@@ -1,4 +1,4 @@
-/** Adgate 0.1.3 — service worker (only place that fetch()es LAN HTTP). */
+/** Adgate 0.1.4 — service worker (only place that fetch()es LAN HTTP). */
 
 importScripts('page-judge-flight.js');
 
@@ -16,11 +16,17 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';
-const { PAGE_JUDGE_TIMEOUT_MS, createPageJudgeFlight } = self.AdgatePageJudgeFlight;
-const pageJudgeFlight = createPageJudgeFlight(PAGE_JUDGE_TIMEOUT_MS);
+// Do not destructure PAGE_JUDGE_TIMEOUT_MS / createPageJudgeFlight into this
+// scope: importScripts shares the service-worker global, and a leaked binding
+// with the same name throws "already been declared".
+const pageJudgeApi = self.AdgatePageJudgeFlight;
+if (!pageJudgeApi || typeof pageJudgeApi.createPageJudgeFlight !== 'function') {
+  throw new Error('AdgatePageJudgeFlight missing after importScripts(page-judge-flight.js)');
+}
+const pageJudgeFlight = pageJudgeApi.createPageJudgeFlight(pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS);
 const logBuffer = [];
 let sessionId = null;
 
@@ -145,7 +151,7 @@ async function openReview() {
   return { ok: true, created: true };
 }
 
-pushLog('info', 'bg_start', { version: VERSION, pageJudgeTimeoutMs: PAGE_JUDGE_TIMEOUT_MS });
+pushLog('info', 'bg_start', { version: VERSION, pageJudgeTimeoutMs: pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS });
 migrateUi()
   .then((settings) => applyRuntimeSettings(settings))
   .catch((e) => pushLog('warn', 'boot_settings_fail', { error: String(e.message || e) }));
@@ -219,7 +225,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         n: body.elements.length,
         sessionId: sid,
         gen: flightHandle.gen,
-        timeoutMs: PAGE_JUDGE_TIMEOUT_MS,
+        timeoutMs: pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS,
       });
       try {
         const res = await fetch(`${base}/v1/page-judge`, {
