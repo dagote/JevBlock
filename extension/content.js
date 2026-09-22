@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.10 — page judge, block path, review log.
+ * Adgate 0.0.11 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.10';
+const CLIENT = 'extension-0.0.11';
 
 let suppressMutations = false;
 
@@ -365,6 +365,90 @@ function removeVastSlots(doc) {
   return rows;
 }
 
+function isFixedOrSticky(el) {
+  const style = (el.getAttribute && el.getAttribute('style')) || '';
+  if (/position\s*:\s*(fixed|sticky)/i.test(style)) return true;
+  try {
+    const pos = getComputedStyle(el).position;
+    return pos === 'fixed' || pos === 'sticky';
+  } catch {
+    return false;
+  }
+}
+
+/** Issue #5: interstitial dialogs, notification permission spam, floating in-page push cards. */
+function classifyPushSpam(el) {
+  if (!el || el.nodeType !== 1) return null;
+  const tag = String(el.tagName || '').toLowerCase();
+  if (['html', 'body', 'head', 'main', 'nav', 'header', 'footer'].includes(tag)) return null;
+  if (el.closest && el.closest('.elementor-widget-text-editor, .elementor-widget-image')) return null;
+  const c = cls(el);
+  if (/elementor-background-overlay/.test(c)) return null;
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  const blob = `${c} ${el.id || ''} ${(el.textContent || '').replace(/\s+/g, ' ').trim()}`;
+  const fixed = isFixedOrSticky(el);
+
+  if (/\bnotification-permission\b/i.test(c) || /wants to\b.{0,80}notifications/i.test(blob)) {
+    return 'force_hide_push_permission';
+  }
+  if (/\binpage-?push\b|\bpush-card\b|\bpush_notification\b|\bfloating-?push\b/i.test(`${c} ${el.id || ''}`)) {
+    return 'force_hide_inpage_push';
+  }
+  if (fixed && (role === 'dialog' || role === 'alertdialog' || /interstitial|special.?offer/i.test(blob))) {
+    return 'force_hide_interstitial';
+  }
+  return null;
+}
+
+function findPushSpam(doc) {
+  const root = typeof doc.querySelectorAll === 'function' ? doc : doc.documentElement || doc.body;
+  if (!root || !root.querySelectorAll) return [];
+  const hits = new Map();
+  root
+    .querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], .notification-permission, [class*="inpage-push"], [class*="push-card"], [class*="push_notification"], [class*="floating-push"], [style*="fixed"], [style*="sticky"]',
+    )
+    .forEach((el) => {
+      const reason = classifyPushSpam(el);
+      if (!reason) return;
+      for (const prev of hits.keys()) {
+        if (prev === el || (prev.contains && prev.contains(el))) return;
+        if (el.contains && el.contains(prev)) hits.delete(prev);
+      }
+      hits.set(el, reason);
+    });
+  return [...hits.entries()];
+}
+
+function removePushSpam(doc) {
+  const rows = [];
+  findPushSpam(doc).forEach(([el, reason], i) => {
+    if (!el.isConnected) return;
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    const outcome = hideEl(el, 1, true);
+    rows.push({
+      id: `p${i}`,
+      tag: String(el.tagName || '').toLowerCase(),
+      src: null,
+      href: null,
+      classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
+      idAttr: el.id || null,
+      role: el.getAttribute('role'),
+      rect: null,
+      text,
+      fixedOrSticky: isFixedOrSticky(el),
+      discover: reason,
+      noul: 1,
+      action: 'hide',
+      reason,
+      removed: outcome.removed,
+      cascadeParents: outcome.cascade,
+      before: outcome.before,
+    });
+  });
+  return rows;
+}
+
 function hideEl(el, noul, slot) {
   if (!el || !el.isConnected) return { removed: false, cascade: [], before: null };
   if (!slot && isLayoutShell(el) && el.tagName !== 'IFRAME') {
@@ -582,6 +666,7 @@ async function runJudge(trigger) {
     decisionRows.push(...removeClbContainers(document));
     decisionRows.push(...removeAdComLinks(document));
     decisionRows.push(...removeVastSlots(document));
+    decisionRows.push(...removePushSpam(document));
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
@@ -804,7 +889,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.10-review',
+    mode: '0.0.11-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

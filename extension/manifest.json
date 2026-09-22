@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.10",
-  "description": "0.0.10 — Block force-hides VAST shortcode slots before JEV",
+  "version": "0.0.11",
+  "description": "0.0.11 — Block force-hides interstitial and push spam before JEV",
   "permissions": [
     "storage",
     "activeTab",
