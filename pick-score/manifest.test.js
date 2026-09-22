@@ -16,7 +16,7 @@ test('pick-score is a separate MV3 extension and Adgate stays 0.1.8', () => {
   assert.ok(manifest.host_permissions.includes('http://*/*'));
   assert.ok(manifest.host_permissions.includes('https://*/*'));
   assert.deepEqual(manifest.content_scripts[0].matches, ['http://*/*', 'https://*/*']);
-  assert.deepEqual(manifest.content_scripts[0].js, ['collect.js', 'content.js']);
+  assert.deepEqual(manifest.content_scripts[0].js, ['host-kind.js', 'collect.js', 'content.js']);
   assert.equal(manifest.permissions.includes('declarativeNetRequest'), false);
   assert.equal(adgate.name, 'Adgate');
   assert.equal(adgate.version, '0.1.8');

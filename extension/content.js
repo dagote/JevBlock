@@ -789,11 +789,12 @@ async function classifyPicked({
       action: j.action,
       reason: j.reason,
       kind: j.kind || 'other',
+      hostOmittedKind: false,
     };
     const rankWantsHide = ranked.hide === true || ranked.action === 'hide';
     let action = ranked.action || j.action;
     let reason = ranked.reason || j.reason;
-    const kind = ranked.kind || j.kind || 'other';
+    const kind = ranked.hostOmittedKind ? ranked.kind || '' : ranked.kind || j.kind || 'other';
     if (cheatForced && action !== 'hide') {
       action = 'hide';
       reason = `client_${ser.discover || 'ad_slot'}`;
@@ -831,6 +832,7 @@ async function classifyPicked({
       discover: ser.discover || '',
       noul: j.noul,
       kind,
+      hostOmittedKind: ranked.hostOmittedKind === true,
       action: !blockEnabled && action === 'hide' ? 'review' : action,
       reason,
       removed,

@@ -61,7 +61,7 @@ decision log for review mode
 
 Defaults: hide **ad**, **promo**, and **tracking_chrome** at noul ≥ 0.75. **unrelated_inject** and **donate_ask** are off (enable + set threshold to use). Persist in `chrome.storage.sync.ranks`.
 
-Decision reason when a rank fires: `rank_<kind>` (shown in the review UI).
+Decision reason when a rank fires: `rank_<kind>` (shown in the review UI). If hosted page-judge omits `kind`, a hide action or high noul is treated as `ad` and the review text says host omitted kind. Allow with low noul is left unlabeled. A literal kind such as `unknown` is not rewritten.
 
 ## Extreme force-hide cheats (legacy)
 

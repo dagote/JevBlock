@@ -16,7 +16,7 @@ Unpacked Chrome extension (Manifest V3, **0.1.0**) that lets you click one DOM e
 3. Model defaults to `jev-tiny`. **Refresh models** calls `GET /models` and fills the list.
 4. **Save**.
 5. **Pick mode ON**. On an `http` or `https` page, hover to outline an element, then click it. The click does not follow links. **Esc** (or the on-page badge) turns pick mode off.
-6. A panel on the page shows `kind`, `noul`, `action` / `reason` when present, `site_type`, `requestId`, and `ms`. Expand the raw request element and the response JSON. A failed call shows the error text with the API key redacted.
+6. A panel on the page shows `kind`, `noul`, `action` / `reason` when present, `site_type`, `requestId`, and `ms`. If the host omits `kind`, hide or high noul displays `ad · host omitted kind`; allow with low noul displays `host omitted kind`. Expand the raw request element and the response JSON. A failed call shows the error text with the API key redacted.
 
 The background service worker POSTs one element to `{Service URL}/v1/page-judge` with `model`, `page`, `elements: [e0]`, and `hideMin` 0.75. The element uses Adgate’s page-judge fields (`id`, `tag`, `role`, `text`, `nearbyLabel`, `href`, `src`, `rect`, `fixedOrSticky`, `discover`, …) plus a capped subtree (`innerText`, descendant tags, link hrefs, image srcs, truncated `outerHTML`).
 

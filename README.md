@@ -14,7 +14,7 @@ Extension version is `extension/manifest.json` (**0.1.8**). Server version is **
    - **site_type** (`choice`)
    - per element **noul** and **kind** (`ad` / `promo` / `unrelated_inject` / `donate_ask` / …)
 4. **Review mode (default):** inspect class, score, and whether a user rank caused hide.
-5. **Block:** when enabled, hide if the element’s class is enabled in ranks and noul ≥ that class threshold. Then empty parents collapse. One neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks.
+5. **Block:** when enabled, hide if the element’s class is enabled in ranks and noul ≥ that class threshold. If the host omits `kind`, hide or high noul is ranked as `ad` and labeled host omitted kind; allow with low noul is not given a kind. Then empty parents collapse. One neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks.
 
 ### Scores
 

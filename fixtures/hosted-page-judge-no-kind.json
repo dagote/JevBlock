@@ -1,0 +1,31 @@
+{
+  "requestId": "5b42b1641a12",
+  "site_type": "docs_app",
+  "site_type_confidence": 0.5149,
+  "site_type_probabilities": {
+    "mail": 0.0025,
+    "news": 0.0002,
+    "social": 0.0002,
+    "search": 0.0018,
+    "ecommerce": 0.0104,
+    "video": 0,
+    "docs_app": 0.5149,
+    "forum": 0.0282,
+    "marketing": 0.4405,
+    "other": 0.0013
+  },
+  "elements": [
+    {
+      "id": "e0",
+      "noul": 0.9241,
+      "action": "hide",
+      "reason": "s1_ad_or_unrelated"
+    }
+  ],
+  "ms": 167,
+  "hideMin": 0.75,
+  "reviewMin": 0.45,
+  "jev_model": "jev-tiny",
+  "truncated": false,
+  "authenticated": false
+}
