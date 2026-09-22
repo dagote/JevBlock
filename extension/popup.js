@@ -13,7 +13,7 @@ const DEFAULTS = {
   model: 'jev-tiny',
   ranks: null,
 };
-const NEED = '0.1.6';
+const NEED = '0.1.7';
 const CUSTOM_MODEL = '__custom__';
 const RANK_KEYS = ['ad', 'promo', 'unrelated_inject', 'donate_ask', 'tracking_chrome'];
 const $ = (id) => document.getElementById(id);

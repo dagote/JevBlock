@@ -1,4 +1,4 @@
-# Adgate 0.1.6 — System One page classify + user ranks
+# Adgate 0.1.7 — System One page classify + user ranks
 
 ## Idea
 
@@ -37,6 +37,10 @@ optional soft_remap_kind (classification only): if model dumps ad slots into nav
 client ranks: hide if kind enabled and noul ≥ that class hideMin
         ▼
 block on → remove hide nodes, then empty parent shells
+        ▼
+one neighborhood re-classify of sibling/same-wrapper candidates
+  (same JEV ranks and model, no force-hide; single follow-up pass)
+        ▼
 decision log for review mode
 ```
 
@@ -88,4 +92,4 @@ Page-judge uses `noul` (ad / unrelated) and `choice` (site type and element kind
 
 ## Versions
 
-Extension **0.1.6**. Server **0.3.2**. The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).
+Extension **0.1.7**. Server **0.3.2**. After a rank hide, one neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks (no Extreme force-hide). The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).

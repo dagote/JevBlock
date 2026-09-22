@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const manifest = require('./manifest.json');
 
 test('manifest wires review scripts and keeps early.js opt-in', () => {
-  assert.equal(manifest.version, '0.1.6');
+  assert.equal(manifest.version, '0.1.7');
   assert.ok(manifest.host_permissions.includes('https://www.dagote.ai/*'));
   assert.ok(manifest.host_permissions.includes('http://192.168.0.119:8770/*'));
   assert.ok(manifest.permissions.includes('declarativeNetRequest'));

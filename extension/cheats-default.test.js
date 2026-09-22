@@ -12,12 +12,14 @@ test('forceHideCheats is off by default and gates Extreme removers', () => {
   assert.match(defaults, /forceHideCheats:\s*false/);
   assert.equal(defaults.includes('forceHideCheats: true'), false);
 
-  const gateIdx = src.indexOf("settings.forceHideCheats === true");
-  const adsIdx = src.indexOf('removeAdvertisementWidgets(document)');
-  const clbIdx = src.indexOf('removeClbContainers(document)');
-  const judgeIdx = src.indexOf("type: 'ADGATE_PAGE_JUDGE'");
+  const run = src.slice(src.indexOf('async function runJudge'), src.indexOf('async function safeJudge'));
+  const gateIdx = run.indexOf("settings.forceHideCheats === true");
+  const adsIdx = run.indexOf('removeAdvertisementWidgets(document)');
+  const clbIdx = run.indexOf('removeClbContainers(document)');
+  const judgeIdx = run.indexOf('classifyPicked(');
   assert.ok(gateIdx > 0 && adsIdx > gateIdx && clbIdx > gateIdx);
   assert.ok(adsIdx < judgeIdx);
+  assert.match(src, /type: 'ADGATE_PAGE_JUDGE'/);
 });
 
 test('decision log normalizes kind and nearbyLabel', () => {

@@ -48,9 +48,11 @@ function loadRemover() {
 
 test('issue 1: Advertisement Elementor widgets fed by ybs/fvc are force-hidden', () => {
   const src = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
-  const hideAt = src.indexOf('removeAdvertisementWidgets(document)');
-  const judgeAt = src.indexOf("type: 'ADGATE_PAGE_JUDGE'");
+  const run = src.slice(src.indexOf('async function runJudge'), src.indexOf('async function safeJudge'));
+  const hideAt = run.indexOf('removeAdvertisementWidgets(document)');
+  const judgeAt = run.indexOf('classifyPicked(');
   assert.ok(hideAt > 0 && hideAt < judgeAt);
+  assert.match(src, /type: 'ADGATE_PAGE_JUDGE'/);
 
   const { document } = parseHTML(fs.readFileSync(FIXTURE, 'utf8'));
   const rows = loadRemover()(document);

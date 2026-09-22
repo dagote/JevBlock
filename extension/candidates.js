@@ -485,6 +485,180 @@
     return dedupe([...found.values()], max);
   }
 
+  /** Extra nodes sent through one follow-up page-judge after a rank hide. */
+  const NEIGHBORHOOD_MAX = 10;
+  const NEIGHBORHOOD_HARD_CAP = 12;
+
+  function neighborhoodLimit(max) {
+    const n = Number(max);
+    if (!Number.isFinite(n) || n <= 0) return NEIGHBORHOOD_MAX;
+    return Math.min(Math.floor(n), NEIGHBORHOOD_HARD_CAP);
+  }
+
+  function isBroadContainer(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (isLandmark(el)) return true;
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'section' || tag === 'article') return true;
+    const classes = classNameOf(el);
+    if (/\belementor-(section|column|container|top-section|inner-section)\b/.test(classes)) return true;
+    if (/\bh-full\b/.test(classes) && /\bw-full\b/.test(classes)) return true;
+    if (/\b(site-content|site-main|hfeed)\b/.test(classes)) return true;
+    return false;
+  }
+
+  function isWidgetWrap(el) {
+    return /\belementor-widget-wrap\b/.test(classNameOf(el));
+  }
+
+  /** Widget chrome sits inside the wrap; climb through it to reach sibling widgets. */
+  function isWidgetChrome(el) {
+    const classes = classNameOf(el);
+    if (isWidgetWrap(el)) return false;
+    if (/\belementor-widget\b/.test(classes)) return true;
+    if (/\belementor-widget-container\b/.test(classes)) return true;
+    if (/\bcode-block\b/.test(classes)) return true;
+    return false;
+  }
+
+  function isThinShell(el) {
+    const tag = String(el.tagName || '').toLowerCase();
+    if (/^(span|a|strong|em|small|label|p|center|font|b|i|h[1-6])$/.test(tag)) return true;
+    const kids = el.children || [];
+    let elements = 0;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i].nodeType === 1) elements += 1;
+    }
+    return elements <= 1;
+  }
+
+  function isHiddenCandidate(el, getStyle) {
+    if (!el || el.nodeType !== 1 || el.isConnected === false) return true;
+    if (ignored(el)) return true;
+    if (el.hasAttribute && el.hasAttribute('hidden')) return true;
+    const aria = el.getAttribute && el.getAttribute('aria-hidden');
+    if (aria === 'true') return true;
+    const inline = (el.getAttribute && el.getAttribute('style')) || '';
+    if (/display\s*:\s*none/i.test(inline) || /visibility\s*:\s*hidden/i.test(inline)) return true;
+    if (getStyle) {
+      try {
+        const style = getStyle(el) || {};
+        const display = String(style.display || '').toLowerCase();
+        const visibility = String(style.visibility || '').toLowerCase();
+        if (display === 'none' || visibility === 'hidden') return true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Wrapper whose siblings should be re-scanned after `el` is hidden.
+   * Prefers the Elementor widget-wrap. Landmarks, sections, and columns are not wrappers.
+   */
+  function neighborhoodWrapper(el) {
+    let current = el && el.parentElement;
+    let best = null;
+    let depth = 0;
+    while (current && depth < 8) {
+      if (isBroadContainer(current)) break;
+      best = current;
+      if (isWidgetWrap(current)) return current;
+      const up = current.parentElement;
+      if (!up || isBroadContainer(up)) break;
+      if (!isThinShell(current) && !isWidgetChrome(current)) break;
+      current = up;
+      depth += 1;
+    }
+    return best;
+  }
+
+  function excludedNeighbor(el, exclude) {
+    if (!el) return true;
+    if (exclude.has(el)) return true;
+    for (const prev of exclude) {
+      if (prev && prev.contains && prev.contains(el)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Sibling / same-wrapper candidates that discovery would already keep.
+   * Does not hide anything; callers send the list through page-judge + ranks.
+   * `anchors` are `{ wrapper }` captured before the hide (the wrap may later collapse).
+   */
+  function collectNeighborhoodCandidates(doc, options) {
+    const opts = options || {};
+    const root = doc && (doc.nodeType === 9 || doc.nodeType === 1) ? doc : null;
+    const limit = neighborhoodLimit(opts.max);
+    const exclude = opts.exclude instanceof Set ? opts.exclude : new Set(opts.exclude || []);
+    const wrappers = [];
+    const seen = new Set();
+    for (const anchor of opts.anchors || []) {
+      const wrap =
+        anchor && anchor.wrapper && anchor.wrapper.nodeType === 1
+          ? anchor.wrapper
+          : anchor && anchor.nodeType === 1
+            ? anchor
+            : null;
+      if (!wrap || seen.has(wrap) || wrap.isConnected === false) continue;
+      if (root && root.contains && wrap !== root && !root.contains(wrap)) continue;
+      if (isBroadContainer(wrap)) continue;
+      seen.add(wrap);
+      wrappers.push(wrap);
+    }
+    if (!wrappers.length || limit <= 0) return [];
+
+    const pool = [];
+    const poolSet = new Set();
+    for (const wrap of wrappers) {
+      const local = collectCandidates(wrap, {
+        max: limit + exclude.size + 8,
+        hostname: opts.hostname,
+        getRect: opts.getRect,
+        getStyle: opts.getStyle,
+        viewport: opts.viewport,
+        scrollX: opts.scrollX,
+        scrollY: opts.scrollY,
+      });
+      for (const item of local) {
+        const el = item.el;
+        if (!el || el === wrap || poolSet.has(el)) continue;
+        if (!wrap.contains || !wrap.contains(el)) continue;
+        if (isHiddenCandidate(el, opts.getStyle)) continue;
+        if (excludedNeighbor(el, exclude)) continue;
+        pool.push(item);
+        poolSet.add(el);
+      }
+    }
+
+    pool.sort((a, b) => b.pri - a.pri);
+    const picked = [];
+    for (const item of pool) {
+      let overlap = false;
+      for (let i = 0; i < picked.length; i++) {
+        const other = picked[i].el;
+        if (other === item.el || (other.contains && other.contains(item.el)) || (item.el.contains && item.el.contains(other))) {
+          overlap = true;
+          break;
+        }
+      }
+      if (overlap) continue;
+      picked.push(item);
+      if (picked.length >= limit) break;
+    }
+    return picked;
+  }
+
+  /** One follow-up per judge. A neighborhood pass must not schedule another. */
+  function shouldRunNeighborhoodFollowup({ pass, hiddenCount, neighborCount } = {}) {
+    if (Number(pass) > 0) return false;
+    if (!(Number(hiddenCount) > 0)) return false;
+    if (!(Number(neighborCount) > 0)) return false;
+    return true;
+  }
+
   function serializeCandidate(item, id, hooks) {
     const el = item.el;
     const options = hooks || {};
@@ -539,7 +713,11 @@
   return {
     AD_HOST_RE,
     FORCED_HIDE,
+    NEIGHBORHOOD_MAX,
     collectCandidates,
+    collectNeighborhoodCandidates,
+    neighborhoodWrapper,
+    shouldRunNeighborhoodFollowup,
     serializeCandidate,
     isForcedHide,
     slotForAsset,

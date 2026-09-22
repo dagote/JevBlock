@@ -1,4 +1,4 @@
-/** Adgate 0.1.6 — service worker. page-judge and log fetch live here. */
+/** Adgate 0.1.7 — service worker. page-judge and log fetch live here. */
 
 importScripts('page-judge-flight.js');
 importScripts('service-link.js');
@@ -19,7 +19,7 @@ const DEFAULTS = {
   model: 'jev-tiny',
 };
 
-const VERSION = '0.1.6';
+const VERSION = '0.1.7';
 const PAGE_JUDGE_BUSY_ATTEMPTS = 30;
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';

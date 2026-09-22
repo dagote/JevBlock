@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.6 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.7 — JEV kind classify + user ranks; one neighborhood re-classify after hide.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -20,7 +20,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.6';
+const CLIENT = 'extension-0.1.7';
 
 let suppressMutations = false;
 
@@ -629,6 +629,197 @@ function sendMessage(msg) {
   });
 }
 
+function emptyJudgeResponse(settings) {
+  return {
+    elements: [],
+    requestId: null,
+    site_type: null,
+    ms: 0,
+    hideMin: Number(settings.hideMin) || 0.75,
+    reviewMin: globalThis.AdgateDecisionLog?.REVIEW_MIN,
+  };
+}
+
+function logCascade(parent, childId) {
+  try {
+    self.AdgateLog?.info('cascade_remove', {
+      page: location.href,
+      childId,
+      reason: parent.reason,
+      tag: parent.tag,
+      idAttr: parent.idAttr,
+      classes: parent.classes,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * One page-judge round: same ranks, same model (background adds it), optional cheats.
+ * Rank hides record the former wrapper so a later neighborhood pass can re-classify siblings.
+ */
+async function classifyPicked({
+  page,
+  settings,
+  picked,
+  idPrefix,
+  blockEnabled,
+  decisionRows,
+  allowCheats,
+  recordAnchors,
+}) {
+  const hooks = layoutHooks();
+  const elements = picked.map((item, i) =>
+    globalThis.AdgateCandidates.serializeCandidate(item, `${idPrefix}${i}`, hooks),
+  );
+  const byId = Object.fromEntries(picked.map((item, i) => [`${idPrefix}${i}`, item.el]));
+  let res = emptyJudgeResponse(settings);
+  let jevError = null;
+  if (elements.length) {
+    try {
+      res = await sendMessage({
+        type: 'ADGATE_PAGE_JUDGE',
+        page,
+        elements,
+        hideMin: Number(settings.hideMin) || 0.75,
+      });
+      if (res?.error) jevError = new Error(res.error);
+    } catch (err) {
+      jevError = err;
+    }
+    if (jevError) {
+      log('error', 'judge_fail', {
+        error: String(jevError.message || jevError),
+        heuristic: decisionRows.length,
+        neighborhood: idPrefix === 'n',
+      });
+    }
+  }
+
+  const anchors = [];
+  let removedCount = 0;
+  let cascadeCount = 0;
+  let rankHideCount = 0;
+
+  if (jevError) {
+    for (const ser of elements) {
+      decisionRows.push({
+        id: ser.id,
+        tag: ser.tag || '',
+        src: ser.src || null,
+        href: ser.href || null,
+        classes: ser.classes || [],
+        idAttr: ser.idAttr || null,
+        role: ser.role || null,
+        rect: ser.rect || null,
+        text: ser.text || '',
+        nearbyLabel: ser.nearbyLabel || null,
+        testId: ser.testId || null,
+        fixedOrSticky: !!ser.fixedOrSticky,
+        discover: ser.discover || '',
+        noul: 0,
+        kind: 'other',
+        action: 'allow',
+        reason: 'judge_error',
+        removed: false,
+        cascadeParents: [],
+        before: null,
+      });
+    }
+    return { jevError, res, anchors, removedCount, cascadeCount, rankHideCount };
+  }
+
+  for (const j of res.elements || []) {
+    const el = byId[j.id];
+    const ser = elements.find((row) => row.id === j.id) || {};
+    let removed = false;
+    let cascade = [];
+    let before = null;
+    const cheatForced =
+      allowCheats &&
+      blockEnabled &&
+      settings.forceHideCheats === true &&
+      globalThis.AdgateCandidates?.isForcedHide?.(ser);
+    const ranked = globalThis.AdgateRanks?.decideHide(settings, j) || {
+      hide: j.action === 'hide',
+      action: j.action,
+      reason: j.reason,
+      kind: j.kind || 'other',
+    };
+    const rankWantsHide = ranked.hide === true || ranked.action === 'hide';
+    let action = ranked.action || j.action;
+    let reason = ranked.reason || j.reason;
+    const kind = ranked.kind || j.kind || 'other';
+    if (cheatForced && action !== 'hide') {
+      action = 'hide';
+      reason = `client_${ser.discover || 'ad_slot'}`;
+    }
+    // Classify-only when Block is off: never remove.
+    const doHide = blockEnabled && (action === 'hide' || ranked.hide || cheatForced);
+    if (recordAnchors && doHide && rankWantsHide && el?.parentElement) {
+      const wrapper = globalThis.AdgateCandidates.neighborhoodWrapper?.(el) || null;
+      if (wrapper) anchors.push({ wrapper });
+    }
+    if (doHide && el) {
+      const outcome = hideEl(el, j.noul, cheatForced || ranked.hide);
+      removed = outcome.removed;
+      cascade = outcome.cascade;
+      before = outcome.before;
+      if (removed) removedCount += 1;
+      cascadeCount += cascade.length;
+      if (rankWantsHide && el.getAttribute('data-adgate-blocked')) rankHideCount += 1;
+      for (const parent of cascade) logCascade(parent, j.id);
+    }
+
+    const row = {
+      id: j.id,
+      tag: ser.tag || el?.tagName?.toLowerCase() || '',
+      src: ser.src || null,
+      href: ser.href || null,
+      classes: ser.classes || [],
+      idAttr: ser.idAttr || null,
+      role: ser.role || null,
+      rect: ser.rect || null,
+      text: ser.text || '',
+      nearbyLabel: ser.nearbyLabel || null,
+      testId: ser.testId || null,
+      fixedOrSticky: !!ser.fixedOrSticky,
+      discover: ser.discover || '',
+      noul: j.noul,
+      kind,
+      action: !blockEnabled && action === 'hide' ? 'review' : action,
+      reason,
+      removed,
+      cascadeParents: cascade,
+      before,
+    };
+    decisionRows.push(row);
+
+    if (settings.showLabels === true && el?.isConnected && !removed) {
+      labelElement(el, {
+        ...row,
+        cls: (ser.classes || []).join(' '),
+      });
+    }
+    log('info', 'element_decision', {
+      id: j.id,
+      noul: j.noul,
+      action: row.action,
+      reason: row.reason,
+      kind: row.kind,
+      discover: row.discover,
+      href: row.href,
+      removed,
+      cascade: cascade.length,
+      blockEnabled,
+      neighborhood: idPrefix === 'n',
+    });
+  }
+
+  return { jevError: null, res, anchors, removedCount, cascadeCount, rankHideCount };
+}
+
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(null);
   const migrated = globalThis.AdgateServiceLink?.migrateStoredSettings(stored) || {
@@ -675,151 +866,76 @@ async function runJudge(trigger) {
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
-  const hooks = layoutHooks();
-  const elements = picked.map((item, i) => globalThis.AdgateCandidates.serializeCandidate(item, `e${i}`, hooks));
-  const byId = Object.fromEntries(picked.map((item, i) => [`e${i}`, item.el]));
 
-  log('info', 'judge_start', { trigger, n: elements.length, heuristic: decisionRows.length, title: page.title.slice(0, 80) });
+  log('info', 'judge_start', {
+    trigger,
+    n: picked.length,
+    heuristic: decisionRows.length,
+    title: page.title.slice(0, 80),
+  });
 
-  let res = {
-    elements: [],
-    requestId: null,
-    site_type: null,
-    ms: 0,
-    hideMin: Number(settings.hideMin) || 0.75,
-    reviewMin: globalThis.AdgateDecisionLog?.REVIEW_MIN,
-  };
-  let jevError = null;
-  if (elements.length) {
-    try {
-      res = await sendMessage({
-        type: 'ADGATE_PAGE_JUDGE',
-        page,
-        elements,
-        hideMin: Number(settings.hideMin) || 0.75,
-      });
-      if (res?.error) jevError = new Error(res.error);
-    } catch (err) {
-      jevError = err;
-    }
-    if (jevError) log('error', 'judge_fail', { error: String(jevError.message || jevError), heuristic: decisionRows.length });
-  }
+  const primary = await classifyPicked({
+    page,
+    settings,
+    picked,
+    idPrefix: 'e',
+    blockEnabled,
+    decisionRows,
+    allowCheats: true,
+    recordAnchors: true,
+  });
+  let res = primary.res;
+  const jevError = primary.jevError;
 
-  if (jevError) {
-    for (const ser of elements) {
-      decisionRows.push({
-        id: ser.id,
-        tag: ser.tag || '',
-        src: ser.src || null,
-        href: ser.href || null,
-        classes: ser.classes || [],
-        idAttr: ser.idAttr || null,
-        role: ser.role || null,
-        rect: ser.rect || null,
-        text: ser.text || '',
-        nearbyLabel: ser.nearbyLabel || null,
-        testId: ser.testId || null,
-        fixedOrSticky: !!ser.fixedOrSticky,
-        discover: ser.discover || '',
-        noul: 0,
-        kind: 'other',
-        action: 'allow',
-        reason: 'judge_error',
-        removed: false,
-        cascadeParents: [],
-        before: null,
-      });
-    }
-  } else {
-    for (const j of res.elements || []) {
-    const el = byId[j.id];
-    const ser = elements.find((row) => row.id === j.id) || {};
-    let removed = false;
-    let cascade = [];
-    let before = null;
-    const cheatForced =
-      blockEnabled &&
-      settings.forceHideCheats === true &&
-      globalThis.AdgateCandidates?.isForcedHide?.(ser);
-    const ranked = globalThis.AdgateRanks?.decideHide(settings, j) || {
-      hide: j.action === 'hide',
-      action: j.action,
-      reason: j.reason,
-      kind: j.kind || 'other',
-    };
-    let action = ranked.action || j.action;
-    let reason = ranked.reason || j.reason;
-    const kind = ranked.kind || j.kind || 'other';
-    if (cheatForced && action !== 'hide') {
-      action = 'hide';
-      reason = `client_${ser.discover || 'ad_slot'}`;
-    }
-    // Classify-only when Block is off: never remove.
-    const doHide = blockEnabled && (action === 'hide' || ranked.hide || cheatForced);
-    if (doHide && el) {
-      const outcome = hideEl(el, j.noul, cheatForced || ranked.hide);
-      removed = outcome.removed;
-      cascade = outcome.cascade;
-      before = outcome.before;
-      for (const parent of cascade) {
-        try {
-          self.AdgateLog?.info('cascade_remove', {
-            page: location.href,
-            childId: j.id,
-            reason: parent.reason,
-            tag: parent.tag,
-            idAttr: parent.idAttr,
-            classes: parent.classes,
-          });
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-
-    const row = {
-      id: j.id,
-      tag: ser.tag || el?.tagName?.toLowerCase() || '',
-      src: ser.src || null,
-      href: ser.href || null,
-      classes: ser.classes || [],
-      idAttr: ser.idAttr || null,
-      role: ser.role || null,
-      rect: ser.rect || null,
-      text: ser.text || '',
-      nearbyLabel: ser.nearbyLabel || null,
-      testId: ser.testId || null,
-      fixedOrSticky: !!ser.fixedOrSticky,
-      discover: ser.discover || '',
-      noul: j.noul,
-      kind,
-      action: !blockEnabled && action === 'hide' ? 'review' : action,
-      reason,
-      removed,
-      cascadeParents: cascade,
-      before,
-    };
-    decisionRows.push(row);
-
-    if (settings.showLabels === true && el?.isConnected && !removed) {
-      labelElement(el, {
-        ...row,
-        cls: (ser.classes || []).join(' '),
-      });
-    }
-    log('info', 'element_decision', {
-      id: j.id,
-      noul: j.noul,
-      action: row.action,
-      reason: row.reason,
-      kind: row.kind,
-      discover: row.discover,
-      href: row.href,
-      removed,
-      cascade: cascade.length,
+  // One neighborhood follow-up inside this judge. safeJudge stays busy, so boot/mutation
+  // coalesces instead of stacking another scan. The extra ADGATE_PAGE_JUDGE is sequential,
+  // so background single-flight does not abort the primary request.
+  const api = globalThis.AdgateCandidates;
+  const judged = new Set(picked.map((item) => item.el).filter(Boolean));
+  const neighbors =
+    primary.rankHideCount > 0 && api?.collectNeighborhoodCandidates
+      ? api.collectNeighborhoodCandidates(document, {
+          anchors: primary.anchors,
+          exclude: judged,
+          max: api.NEIGHBORHOOD_MAX,
+          hostname: location.hostname,
+          ...layoutHooks(),
+        })
+      : [];
+  let neighborhoodPass = 0;
+  let neighborhoodAdded = 0;
+  let neighborhoodHides = 0;
+  let neighborhoodCascade = 0;
+  if (
+    api?.shouldRunNeighborhoodFollowup?.({
+      pass: neighborhoodPass,
+      hiddenCount: primary.rankHideCount,
+      neighborCount: neighbors.length,
+    })
+  ) {
+    neighborhoodPass = 1;
+    const follow = await classifyPicked({
+      page: extractPage(),
+      settings,
+      picked: neighbors,
+      idPrefix: 'n',
       blockEnabled,
+      decisionRows,
+      allowCheats: false,
+      recordAnchors: false,
     });
-    }
+    neighborhoodAdded = neighbors.length;
+    neighborhoodHides = follow.removedCount;
+    neighborhoodCascade = follow.cascadeCount;
+    log('info', 'neighborhood_rescan', {
+      added: neighborhoodAdded,
+      hides: neighborhoodHides,
+      cascade: neighborhoodCascade,
+      fromHides: primary.rankHideCount,
+      trigger,
+      pass: neighborhoodPass,
+    });
+    if (!res?.requestId && follow.res?.requestId) res = follow.res;
   }
 
   const run = globalThis.AdgateDecisionLog.buildDecisionLog({
@@ -862,6 +978,9 @@ async function runJudge(trigger) {
     ms: res.ms,
     blockEnabled,
     requestId: res.requestId,
+    neighborhoodAdded,
+    neighborhoodHides,
+    neighborhoodCascade,
   });
 
   setTimeout(() => {
@@ -943,7 +1062,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.6-classify',
+    mode: '0.1.7-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
