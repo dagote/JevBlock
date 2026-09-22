@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.11",
-  "description": "0.0.11 — Block force-hides interstitial and push spam before JEV",
+  "version": "0.0.12",
+  "description": "0.0.12 — Block collapses empty parents after force-hide",
   "permissions": [
     "storage",
     "activeTab",

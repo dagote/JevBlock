@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.11 — page judge, block path, review log.
+ * Adgate 0.0.12 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.11';
+const CLIENT = 'extension-0.0.12';
 
 let suppressMutations = false;
 
@@ -889,7 +889,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.11-review',
+    mode: '0.0.12-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

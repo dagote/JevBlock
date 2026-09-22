@@ -13,7 +13,7 @@ Feed **page context** (not just one node) into System One, then ask:
 page excerpt + headings + url
         +
 candidate elements (Extreme Elementor slots, Advertisement labels, __clb / IAB iframes, ad-host href/src, VAST, blank html widgets, fixed overlays)
-Extension 0.0.11 / adgate 0.2.4. Block on force-hides Advertisement Elementor widgets, `__clb-…_container` creatives, `ad.com` anchors, VAST shortcode slots, and interstitial / push-permission / in-page push nodes before JEV. Caution1.png is page content and is not removed.
+Extension 0.0.12 / adgate 0.2.4. Block on force-hides Extreme ad slots before JEV, then collapses empty parent shells (`empty_parent`). Caution1.png is page content and is not removed.
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
