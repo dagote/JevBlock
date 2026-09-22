@@ -1,10 +1,7 @@
 /**
- * document_start defenses inspired by canyoublockit Extreme Test vectors:
- * - pop-unders via window.open
- * - push notification permission prompts
- * - in-page push / interstitial shells injected early
- *
- * Network ad hosts are blocked separately via declarativeNetRequest (rules.json).
+ * document_start defenses for canyoublockit Extreme Test.
+ * Registered in the page MAIN world only when "Extreme early defenses" is on.
+ * Known ad hosts are blocked separately via declarativeNetRequest when Block is on.
  */
 (function () {
   const AD_HOST =
@@ -12,7 +9,8 @@
 
   function elog(event, fields) {
     try {
-      if (self.AdgateLog) AdgateLog.info(event, fields || {});
+      console.info('[adgate-early]', event, fields || {});
+      window.dispatchEvent(new CustomEvent('adgate-early-log', { detail: { event, fields: fields || {} } }));
     } catch {
       /* ignore */
     }

@@ -1,17 +1,27 @@
 /**
- * Adgate 0.0.0 — System One page judge.
- * Send page context + candidate elements → site_type + P(ad|unrelated) per element.
+ * Adgate 0.0.4 — page judge, block path, review log.
+ * Annotate chips stay off unless Advanced is enabled.
  */
 
 const DEFAULTS = {
   enabled: true,
-  blockEnabled: false, // annotate only by default — show % / data, do not remove
+  blockEnabled: false,
+  reviewMode: true,
   hideMin: 0.75,
-  showLabels: true,
-  showPanel: true,
+  showLabels: false,
+  showPanel: false,
+  extremeEarly: false,
+  uiRev: 1,
   maxElements: 16,
   serverUrl: 'http://192.168.0.119:8770',
 };
+
+const CLIENT = 'extension-0.0.4';
+const AD_SRC_RE =
+  /mail-us|doubleclick|googlesyndication|pagead2|adnxs|taboola|outbrain|amazon-adsystem|googletagservices|adservice\.google|popads|propellerads|adsterra|clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|fvcwqkkqmuv/i;
+const AD_HINT_RE = /ad|ads|sponsor|promo|banner|gpt|dfp|interstitial|overlay|popunder|push/i;
+
+let suppressMutations = false;
 
 function log(level, event, fields) {
   try {
@@ -34,18 +44,35 @@ function cls(el) {
   return String(el.className.baseVal || '');
 }
 
+function isPageLandmark(el) {
+  const tag = el.tagName.toLowerCase();
+  if (['html', 'body', 'main', 'header', 'nav', 'footer'].includes(tag)) return true;
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  return role === 'main';
+}
+
 function isLayoutShell(el) {
   if (!(el instanceof Element)) return true;
   const tag = el.tagName.toLowerCase();
-  if (['html', 'body', 'main', 'article', 'header', 'nav', 'footer', 'section'].includes(tag)) return true;
-  const c = cls(el);
-  if (/\bh-full\b/.test(c) && /\bw-full\b/.test(c)) return true;
+  if (['html', 'body', 'main', 'header', 'nav', 'footer'].includes(tag)) return true;
+  let pos = '';
   try {
-    const r = el.getBoundingClientRect();
-    const vp = Math.max(window.innerWidth * window.innerHeight, 1);
-    if ((r.width * r.height) / vp >= 0.4) return true;
+    pos = getComputedStyle(el).position;
   } catch {
     /* ignore */
+  }
+  const overlay = pos === 'fixed' || pos === 'sticky';
+  if (['article', 'section'].includes(tag) && !overlay) return true;
+  const c = cls(el);
+  if (!overlay && /\bh-full\b/.test(c) && /\bw-full\b/.test(c)) return true;
+  if (!overlay) {
+    try {
+      const r = el.getBoundingClientRect();
+      const vp = Math.max(window.innerWidth * window.innerHeight, 1);
+      if ((r.width * r.height) / vp >= 0.4) return true;
+    } catch {
+      /* ignore */
+    }
   }
   return false;
 }
@@ -97,6 +124,24 @@ function serializeEl(el, id) {
   };
 }
 
+function snapshotEl(el) {
+  let html = '';
+  try {
+    html = el.outerHTML || '';
+  } catch {
+    /* ignore */
+  }
+  if (html.length > 600) html = `${html.slice(0, 600)}…`;
+  let text = '';
+  try {
+    text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  } catch {
+    /* ignore */
+  }
+  if (text.length > 180) text = text.slice(0, 180);
+  return { html, text };
+}
+
 function candidatePriority(el) {
   const tag = el.tagName.toLowerCase();
   const src = el.currentSrc || el.src || el.getAttribute('src') || '';
@@ -110,26 +155,65 @@ function candidatePriority(el) {
     r = { width: 0, height: 0 };
   }
   const area = Math.max(r.width, 0) * Math.max(r.height, 0);
-
-  // Highest: known ad iframes (these were getting skipped when a big parent won by area)
-  if (tag === 'iframe' && /mail-us|doubleclick|googlesyndication|pagead2|adnxs|taboola|outbrain|amazon-adsystem|googletagservices|adservice\.google/i.test(src)) {
-    return 1_000_000 + area;
+  let pos = '';
+  try {
+    pos = getComputedStyle(el).position;
+  } catch {
+    /* ignore */
   }
+  const overlay = pos === 'fixed' || pos === 'sticky';
+
+  if (tag === 'iframe' && AD_SRC_RE.test(src)) return 1_000_000 + area;
   if (tag === 'ins' && /adsbygoogle/i.test(c)) return 900_000 + area;
   if (el.getAttribute('data-ad-client') || el.getAttribute('data-ad-slot')) return 880_000 + area;
   if (/^(right-rail-ad|gam-iframe-basic-mail|mail-right-rail)$/i.test(testId)) return 860_000 + area;
   if (tag === 'iframe' && src) return 700_000 + area;
-  if (tag === 'iframe') return 650_000 + area; // src may fill in later
+  if (tag === 'iframe') return 650_000 + area;
+  if (overlay && (AD_HINT_RE.test(`${id} ${c}`) || area > 40_000)) return 640_000 + area;
   if (/google-auto-placed/i.test(c) || /div-gpt-ad|google_ads/i.test(id)) return 600_000 + area;
-  if (/ad|sponsor|promo|banner|gpt|dfp/i.test(testId + c + id)) return 200_000 + area;
-  return area; // generic asides/divs last
+  if (AD_HINT_RE.test(testId + c + id)) return 200_000 + area;
+  return area;
 }
 
-/** Candidate pool — prioritize ad iframes so they never lose to huge parents. */
+function collectFixedOverlays(seeds) {
+  let checked = 0;
+  const nodes = document.querySelectorAll('div, aside, section, iframe, ins, a');
+  for (const el of nodes) {
+    if (checked++ > 300) break;
+    if (seeds.has(el) || isPageLandmark(el)) continue;
+    let pos = '';
+    let z = 0;
+    try {
+      const cs = getComputedStyle(el);
+      pos = cs.position;
+      z = Number.parseInt(cs.zIndex, 10) || 0;
+    } catch {
+      continue;
+    }
+    if (pos !== 'fixed' && pos !== 'sticky') continue;
+    let r;
+    try {
+      r = el.getBoundingClientRect();
+    } catch {
+      continue;
+    }
+    const vp = Math.max(window.innerWidth * window.innerHeight, 1);
+    const cov = (Math.max(r.width, 0) * Math.max(r.height, 0)) / vp;
+    const hinted = AD_HINT_RE.test(`${el.id || ''} ${cls(el)}`);
+    const tag = el.tagName.toLowerCase();
+    const large = cov >= 0.18;
+    const highFloat = z >= 2000 && r.height >= 120 && r.width >= 200;
+    if (large || hinted || highFloat || (tag === 'iframe' && (cov >= 0.05 || r.height >= 40))) {
+      seeds.add(el);
+    }
+  }
+}
+
+/** Candidate pool — iframes, ad hosts, and fixed/sticky overlays. */
 function collectElements(max) {
   const seeds = new Set();
   const sels = [
-    'iframe', // ALL iframes, with or without src yet
+    'iframe',
     'ins.adsbygoogle',
     'ins[class*="ad"]',
     '[data-ad-client]',
@@ -146,6 +230,13 @@ function collectElements(max) {
     '[class*="ads"]',
     '[class*="sponsor"]',
     '[class*="banner"]',
+    '[class*="interstitial"]',
+    '[id*="interstitial"]',
+    '[class*="overlay"]',
+    '[id*="overlay"]',
+    '[class*="pushdown"]',
+    '[class*="ad-push"]',
+    '[id*="ad-push"]',
     '[id*="ad"]',
     '[id*="gpt"]',
     'object',
@@ -159,7 +250,6 @@ function collectElements(max) {
     }
   }
 
-  // Open shadow roots (some ad slots mount there)
   document.querySelectorAll('*').forEach((host) => {
     if (host.shadowRoot) {
       try {
@@ -170,18 +260,23 @@ function collectElements(max) {
     }
   });
 
+  try {
+    collectFixedOverlays(seeds);
+  } catch {
+    /* ignore */
+  }
+
   const scored = [];
   for (const el of seeds) {
     if (!(el instanceof Element)) continue;
     if (el.closest('[data-adgate-blocked],[data-adgate-ignore]')) continue;
     const tag = el.tagName.toLowerCase();
     if (['script', 'style', 'link', 'meta', 'noscript', 'html', 'body'].includes(tag)) continue;
-    // Never drop iframes/ins for layout-shell heuristic
+    if (isPageLandmark(el)) continue;
     if (isLayoutShell(el) && !['iframe', 'ins', 'object', 'embed'].includes(tag)) continue;
     const r = el.getBoundingClientRect();
-    // Allow offscreen / zero-size iframes (ads often size late) if they have ad-like src
     const src = el.src || el.getAttribute('src') || '';
-    const adSrc = /mail-us|doubleclick|googlesyndication|pagead|adnxs|taboola|outbrain/i.test(src);
+    const adSrc = AD_SRC_RE.test(src);
     if (!adSrc && (r.width < 16 || r.height < 16)) continue;
     scored.push({ el, tag, pri: candidatePriority(el), src: src.slice(0, 120) });
   }
@@ -189,7 +284,6 @@ function collectElements(max) {
 
   const picked = [];
   for (const item of scored) {
-    // If a lower-priority ancestor/descendant is already picked, prefer the higher-priority node
     let conflictIdx = -1;
     for (let i = 0; i < picked.length; i++) {
       const p = picked[i];
@@ -199,10 +293,7 @@ function collectElements(max) {
       }
     }
     if (conflictIdx >= 0) {
-      if (item.pri > picked[conflictIdx].pri) {
-        picked.splice(conflictIdx, 1, item); // replace fat parent with ad iframe
-      }
-      // else keep existing higher-priority node; skip this one
+      if (item.pri > picked[conflictIdx].pri) picked.splice(conflictIdx, 1, item);
       continue;
     }
     picked.push(item);
@@ -225,14 +316,14 @@ function collectElements(max) {
 }
 
 function hideEl(el, noul) {
-  if (!el || !el.isConnected) return false;
+  if (!el || !el.isConnected) return { removed: false, cascade: [], before: null };
   if (isLayoutShell(el) && el.tagName !== 'IFRAME') {
-    // Prefer hiding an iframe child if present
     const ifr = el.querySelector('iframe');
     if (ifr) return hideEl(ifr, noul);
     log('warn', 'skip_layout', { tag: el.tagName, cls: cls(el).slice(0, 60) });
-    return false;
+    return { removed: false, cascade: [], before: null };
   }
+  const before = snapshotEl(el);
   el.setAttribute('data-adgate-blocked', String(noul));
   if (el.tagName === 'IFRAME') {
     try {
@@ -248,12 +339,15 @@ function hideEl(el, noul) {
       /* ignore */
     }
   });
+  const parent = el.parentElement;
   try {
     el.remove();
   } catch {
     el.style.setProperty('display', 'none', 'important');
+    return { removed: false, cascade: [], before };
   }
-  return true;
+  const cascade = globalThis.AdgateCollapse?.collapseEmptyAncestors(parent) || [];
+  return { removed: true, cascade, before };
 }
 
 function clearAnnotations() {
@@ -272,7 +366,7 @@ function colorForP(p) {
   return '#64748b';
 }
 
-/** Small % chip on the element — not a full-page overlay. */
+/** Optional advanced annotate chip. Review mode does not call this. */
 function labelElement(el, row) {
   if (!el?.isConnected) return;
   const r = el.getBoundingClientRect();
@@ -314,7 +408,6 @@ function labelElement(el, row) {
   document.documentElement.appendChild(chip);
 }
 
-/** Docked panel with full judgment data (all rows). */
 function renderPanel(payload) {
   document.querySelectorAll('[data-adgate-panel]').forEach((n) => n.remove());
   const panel = document.createElement('div');
@@ -354,11 +447,10 @@ function renderPanel(payload) {
       return `<div style="border-top:1px solid #333;padding:6px 0">
         <div><b style="color:${colorForP(d.noul)}">${pct}%</b>
           · <code>${d.id}</code> · ${d.tag} · <i>${d.action}</i>
+          ${d.removed ? ' · removed' : ''}
           ${d.reason ? ` · ${d.reason}` : ''}</div>
         ${d.src ? `<div style="color:#888;word-break:break-all">src: ${escapeHtml(d.src)}</div>` : ''}
-        ${d.cls ? `<div style="color:#666;word-break:break-all">class: ${escapeHtml(d.cls)}</div>` : ''}
-        ${d.testId ? `<div style="color:#666">testId: ${escapeHtml(d.testId)}</div>` : ''}
-        ${d.rect ? `<div style="color:#555">${d.rect.w}×${d.rect.h}</div>` : ''}
+        ${(d.cascadeParents || []).length ? `<div style="color:#a78bfa">empty parents: ${d.cascadeParents.length}</div>` : ''}
       </div>`;
     })
     .join('');
@@ -366,10 +458,10 @@ function renderPanel(payload) {
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:start">
       <div>
-        <div style="font-weight:700">Adgate annotate</div>
+        <div style="font-weight:700">Adgate annotate (advanced)</div>
         <div style="color:#c4b5fd">site: ${escapeHtml(payload.site_type || '?')}${conf}</div>
         <div style="color:#777;font-size:11px">${escapeHtml(topTypes)}</div>
-        <div style="color:#666;font-size:11px">${payload.ms ?? '?'} ms · block OFF</div>
+        <div style="color:#666;font-size:11px">${payload.ms ?? '?'} ms · block ${payload.blockEnabled ? 'ON' : 'OFF'}</div>
       </div>
       <button type="button" data-adgate-close style="background:#333;color:#fff;border:0;border-radius:6px;padding:4px 8px;cursor:pointer">✕</button>
     </div>
@@ -397,8 +489,33 @@ function sendMessage(msg) {
   });
 }
 
+async function loadSettings() {
+  const stored = await chrome.storage.sync.get(null);
+  const data = { ...DEFAULTS, ...stored };
+  if ((stored.uiRev || 0) >= 1) return data;
+  const migrated = {
+    showLabels: false,
+    showPanel: false,
+    reviewMode: true,
+    uiRev: 1,
+  };
+  await chrome.storage.sync.set(migrated);
+  return { ...data, ...migrated };
+}
+
+async function rememberRun(run) {
+  const prev = await chrome.storage.local.get(['adgateRunHistory']);
+  const history = Array.isArray(prev.adgateRunHistory) ? prev.adgateRunHistory : [];
+  history.unshift(run);
+  await chrome.storage.local.set({
+    adgateLastRun: run,
+    adgateLastScan: run,
+    adgateRunHistory: history.slice(0, 8),
+  });
+}
+
 async function runJudge(trigger) {
-  const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
+  const settings = await loadSettings();
   if (settings.enabled === false) {
     return { ok: false, error: 'disabled' };
   }
@@ -408,7 +525,6 @@ async function runJudge(trigger) {
   const nodes = collectElements(Number(settings.maxElements) || 12);
   const elements = nodes.map((el, i) => serializeEl(el, `e${i}`));
   const byId = Object.fromEntries(nodes.map((el, i) => [`e${i}`, el]));
-  const serById = Object.fromEntries(elements.map((e) => [e.id, e]));
 
   log('info', 'judge_start', { trigger, n: elements.length, title: page.title.slice(0, 80) });
 
@@ -425,76 +541,119 @@ async function runJudge(trigger) {
   }
 
   const blockEnabled = settings.blockEnabled === true;
-  let hidden = 0;
-  let review = 0;
-  let allowed = 0;
-  const rows = [];
+  const decisionRows = [];
+  suppressMutations = true;
 
   for (const j of res.elements || []) {
     const el = byId[j.id];
-    const ser = serById[j.id] || {};
-    let did = false;
-    // Annotate-only unless blockEnabled is explicitly on
+    const ser = elements.find((row) => row.id === j.id) || {};
+    let removed = false;
+    let cascade = [];
+    let before = null;
     if (blockEnabled && j.action === 'hide' && el) {
-      did = hideEl(el, j.noul);
-      if (did) hidden += 1;
-    } else if (j.action === 'hide' || j.action === 'review') {
-      review += 1; // suggested hide counted as review while annotate-only
-    } else {
-      allowed += 1;
+      const outcome = hideEl(el, j.noul);
+      removed = outcome.removed;
+      cascade = outcome.cascade;
+      before = outcome.before;
+      for (const parent of cascade) {
+        try {
+          self.AdgateLog?.info('cascade_remove', {
+            page: location.href,
+            childId: j.id,
+            reason: parent.reason,
+            tag: parent.tag,
+            idAttr: parent.idAttr,
+            classes: parent.classes,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
     }
 
     const row = {
       id: j.id,
+      tag: ser.tag || el?.tagName?.toLowerCase() || '',
+      src: ser.src || null,
+      classes: ser.classes || [],
+      idAttr: ser.idAttr || null,
+      rect: ser.rect || null,
+      text: ser.text || '',
+      testId: ser.testId || null,
+      fixedOrSticky: !!ser.fixedOrSticky,
       noul: j.noul,
       action: j.action,
       reason: j.reason,
-      hidden: did,
-      tag: ser.tag || el?.tagName?.toLowerCase() || '',
-      src: ser.src || '',
-      cls: (ser.classes || []).join(' ').slice(0, 120),
-      testId: ser.testId || '',
-      rect: ser.rect || null,
-      text: ser.text || '',
+      removed,
+      cascadeParents: cascade,
+      before,
     };
-    rows.push(row);
+    decisionRows.push(row);
 
-    if (settings.showLabels !== false && el?.isConnected && !did) {
-      labelElement(el, row);
+    if (settings.showLabels === true && el?.isConnected && !removed) {
+      labelElement(el, {
+        ...row,
+        cls: (ser.classes || []).join(' '),
+      });
     }
     log('info', 'element_decision', {
       id: j.id,
       noul: j.noul,
       action: j.action,
       reason: j.reason,
-      hidden: did,
+      removed,
+      cascade: cascade.length,
       blockEnabled,
     });
   }
 
-  const payload = {
-    ts: Date.now(),
-    url: page.url,
-    trigger,
-    blockEnabled,
+  const run = globalThis.AdgateDecisionLog.buildDecisionLog({
+    ts: new Date().toISOString(),
+    requestId: res.requestId,
+    page,
     site_type: res.site_type,
     site_type_confidence: res.site_type_confidence,
     site_type_probabilities: res.site_type_probabilities,
+    hideMin: res.hideMin ?? (Number(settings.hideMin) || 0.75),
+    reviewMin: res.reviewMin ?? globalThis.AdgateDecisionLog.REVIEW_MIN,
+    blockEnabled,
+    trigger,
+    client: CLIENT,
     ms: res.ms,
-    requestId: res.requestId,
-    summary: { candidates: elements.length, hidden, review, allowed },
-    decisions: rows,
-  };
-  await chrome.storage.local.set({ adgateLastScan: payload });
-  if (settings.showPanel !== false) renderPanel(payload);
+    decisions: decisionRows,
+  });
+
+  await rememberRun(run);
+  try {
+    if (self.AdgateLog) {
+      AdgateLog.info('decision_run', { page: location.href, run });
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const shipped = await AdgateLog.flush();
+        if (shipped?.shipped || !AdgateLog.getBuffer().length) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  if (settings.showPanel === true) {
+    renderPanel({ ...run, decisions: run.decisions });
+  }
+
   log('info', 'judge_done', {
     site_type: res.site_type,
-    ...payload.summary,
+    ...run.summary,
     ms: res.ms,
     blockEnabled,
+    requestId: res.requestId,
   });
-  if (self.AdgateLog) AdgateLog.flush().catch(() => {});
-  return { ok: true, ...payload };
+
+  setTimeout(() => {
+    suppressMutations = false;
+  }, 700);
+
+  return { ok: true, ...run };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -527,9 +686,38 @@ async function safeJudge(trigger) {
   }
 }
 
-chrome.storage.sync.get(DEFAULTS).then((s) => {
-  log('info', 'boot', { mode: '0.0.0-page-judge', enabled: s.enabled !== false });
+function watchLateInject(settings) {
+  if (settings.blockEnabled !== true || window.__adgateMo) return;
+  let timer = null;
+  let extra = 0;
+  const mo = new MutationObserver(() => {
+    if (suppressMutations || extra >= 2) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (suppressMutations) return;
+      extra += 1;
+      safeJudge('mutation');
+    }, 1600);
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+  window.__adgateMo = mo;
+}
+
+window.addEventListener('adgate-early-log', (event) => {
+  const detail = event?.detail || {};
+  if (!detail.event) return;
+  log('info', detail.event, detail.fields || {});
+});
+
+loadSettings().then((s) => {
+  log('info', 'boot', {
+    mode: '0.0.4-review',
+    enabled: s.enabled !== false,
+    blockEnabled: s.blockEnabled === true,
+    reviewMode: s.reviewMode !== false,
+  });
   if (s.enabled === false) return;
+  watchLateInject(s);
   setTimeout(() => safeJudge('boot'), 1000);
   setTimeout(() => safeJudge('boot2'), 3500);
 });

@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.3",
-  "description": "0.0.3 \u2014 annotate; per-element jev calls; skip if prefix too long",
+  "version": "0.0.4",
+  "description": "0.0.4 — review mode; remove ads and empty parents; decision log",
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "http://192.168.0.119:8770/*",
@@ -26,6 +27,15 @@
   "background": {
     "service_worker": "background.js"
   },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ad_hosts",
+        "enabled": false,
+        "path": "rules.json"
+      }
+    ]
+  },
   "content_scripts": [
     {
       "matches": [
@@ -33,6 +43,8 @@
         "https://*/*"
       ],
       "js": [
+        "empty-parent.js",
+        "decision-log.js",
         "logger.js",
         "content.js"
       ],

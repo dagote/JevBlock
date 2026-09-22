@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Inspect adgate JSONL logs (server + extension-shipped client events).
 set -euo pipefail
-LOG="${ADGATE_LOG_PATH:-/home/ruin/projects/experiments/adblock-systemone/logs/adgate.jsonl}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LOG="${ADGATE_LOG_PATH:-$ROOT/server/logs/adgate.jsonl}"
 N="${1:-60}"
 if [[ ! -f "$LOG" ]]; then
   echo "No log yet: $LOG"

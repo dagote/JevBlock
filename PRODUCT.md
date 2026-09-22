@@ -21,8 +21,12 @@ POST /v1/page-judge  (adgate → jev-local)
         └─ Step 2: per-element noul (with site_type in state)
         │
         ▼
-hide if P ≥ hideMin (default 0.75)
-popup shows site type + table of P / action
+action: hide if P ≥ hideMin (default 0.75)
+        review if 0.45 ≤ P < hideMin
+        allow otherwise
+        ▼
+block on → remove hide nodes, then empty parent shells
+decision log (JSON + JSONL) for review mode
 ```
 
 ## Honest limits (local jev-local 1.5B)

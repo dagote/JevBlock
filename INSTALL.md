@@ -1,3 +1,7 @@
+# Install notes
+
+The unpacked extension version in this repo is `extension/manifest.json` (currently **0.0.4**). The 0.3.3 notes below describe an older Chrome-vs-disk mismatch; they are not the current package version.
+
 # Why you still see 0.1.0
 
 Chrome **does not load** the extension from:

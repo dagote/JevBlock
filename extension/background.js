@@ -1,16 +1,21 @@
-/** Adgate 0.0.0 — service worker (only place that fetch()es LAN HTTP). */
+/** Adgate 0.0.4 — service worker (only place that fetch()es LAN HTTP). */
 
 const DEFAULTS = {
   enabled: true,
   blockEnabled: false,
+  reviewMode: true,
   hideMin: 0.75,
-  showLabels: true,
-  showPanel: true,
+  showLabels: false,
+  showPanel: false,
+  extremeEarly: false,
+  uiRev: 1,
   maxElements: 16,
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const VERSION = '0.0.3';
+const VERSION = '0.0.4';
+const RULESET_ID = 'ad_hosts';
+const EARLY_ID = 'adgate-early';
 const logBuffer = [];
 let sessionId = null;
 
@@ -57,7 +62,88 @@ async function flushLogs(serverUrl) {
   }
 }
 
+async function migrateUi() {
+  const data = await chrome.storage.sync.get(null);
+  if ((data.uiRev || 0) >= 1) return { ...DEFAULTS, ...data };
+  const next = {
+    ...DEFAULTS,
+    ...data,
+    showLabels: false,
+    showPanel: false,
+    reviewMode: true,
+    uiRev: 1,
+  };
+  await chrome.storage.sync.set(next);
+  return next;
+}
+
+async function syncBlockRules(blockEnabled) {
+  if (!chrome.declarativeNetRequest?.updateEnabledRulesets) return;
+  await chrome.declarativeNetRequest.updateEnabledRulesets({
+    enableRulesetIds: blockEnabled ? [RULESET_ID] : [],
+    disableRulesetIds: blockEnabled ? [] : [RULESET_ID],
+  });
+  pushLog('info', 'dnr_sync', { blockEnabled: !!blockEnabled });
+}
+
+async function syncEarlyScript(enabled) {
+  if (!chrome.scripting?.registerContentScripts) return;
+  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [EARLY_ID] });
+  if (enabled && !existing.length) {
+    await chrome.scripting.registerContentScripts([
+      {
+        id: EARLY_ID,
+        matches: ['http://*/*', 'https://*/*'],
+        js: ['early.js'],
+        runAt: 'document_start',
+        world: 'MAIN',
+        persistAcrossSessions: true,
+      },
+    ]);
+  } else if (!enabled && existing.length) {
+    await chrome.scripting.unregisterContentScripts({ ids: [EARLY_ID] });
+  }
+  pushLog('info', 'early_sync', { enabled: !!enabled });
+}
+
+async function applyRuntimeSettings(settings) {
+  try {
+    await syncBlockRules(settings.blockEnabled === true);
+  } catch (e) {
+    pushLog('warn', 'dnr_sync_fail', { error: String(e.message || e) });
+  }
+  try {
+    await syncEarlyScript(settings.extremeEarly === true);
+  } catch (e) {
+    pushLog('warn', 'early_sync_fail', { error: String(e.message || e) });
+  }
+}
+
+async function openReview() {
+  const url = chrome.runtime.getURL('review.html');
+  const stored = await chrome.storage.session.get(['reviewTabId']);
+  const existingId = stored.reviewTabId;
+  if (existingId != null) {
+    try {
+      const tab = await chrome.tabs.get(existingId);
+      if (!tab.url || tab.url === url) {
+        await chrome.tabs.update(existingId, { active: true });
+        if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+        return { ok: true, focused: true };
+      }
+    } catch {
+      /* review tab was closed */
+    }
+  }
+  const created = await chrome.tabs.create({ url });
+  if (created?.id != null) await chrome.storage.session.set({ reviewTabId: created.id });
+  return { ok: true, created: true };
+}
+
 pushLog('info', 'bg_start', { version: VERSION });
+migrateUi()
+  .then((settings) => applyRuntimeSettings(settings))
+  .catch((e) => pushLog('warn', 'boot_settings_fail', { error: String(e.message || e) }));
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabUrl = sender.tab?.url || '';
@@ -93,6 +179,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'ADGATE_FLUSH_LOGS') {
     chrome.storage.sync.get(DEFAULTS).then((s) => flushLogs(s.serverUrl).then(sendResponse));
+    return true;
+  }
+
+  if (message?.type === 'ADGATE_OPEN_REVIEW') {
+    openReview()
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+
+  if (message?.type === 'ADGATE_APPLY_SETTINGS') {
+    applyRuntimeSettings(message.settings || {})
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
     return true;
   }
 

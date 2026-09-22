@@ -19,12 +19,32 @@ from pydantic import BaseModel, Field
 
 JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
-LOG_PATH = Path(
-	os.getenv(
-		"ADGATE_LOG_PATH",
-		"/home/ruin/projects/experiments/adblock-systemone/logs/adgate.jsonl",
-	)
-)
+SERVER_DIR = Path(__file__).resolve().parent
+REVIEW_MIN = 0.45
+SERVER_VERSION = "0.2.1"
+
+
+def resolve_path(env_value: str | None, default: Path) -> Path:
+	if env_value:
+		return Path(env_value)
+	return default
+
+
+def default_log_path() -> Path:
+	return SERVER_DIR / "logs" / "adgate.jsonl"
+
+
+def default_runs_dir() -> Path:
+	return SERVER_DIR / "logs" / "runs"
+
+
+def default_decision_log() -> Path:
+	return SERVER_DIR / "logs" / "decision-runs.jsonl"
+
+
+LOG_PATH = resolve_path(os.getenv("ADGATE_LOG_PATH"), default_log_path())
+RUNS_DIR = resolve_path(os.getenv("ADGATE_RUNS_DIR"), default_runs_dir())
+DECISION_JSONL = resolve_path(os.getenv("ADGATE_DECISION_LOG"), default_decision_log())
 
 THRESHOLDS = {
 	"careful": 0.85,
@@ -45,7 +65,7 @@ AD_HINT_RE = re.compile(
 	re.I,
 )
 
-app = FastAPI(title="adgate", version="0.2.0")
+app = FastAPI(title="adgate", version=SERVER_VERSION)
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -63,6 +83,34 @@ def log_event(event: str, **fields: Any) -> None:
 	row = {"ts": _now(), "event": event, **fields}
 	with LOG_PATH.open("a", encoding="utf-8") as f:
 		f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+
+
+def action_for_noul(
+	noul: float, hide_min: float, review_min: float = REVIEW_MIN
+) -> Literal["hide", "review", "allow"]:
+	"""hide at hide_min (default 0.75); review band is [review_min, hide_min)."""
+	if noul >= hide_min:
+		return "hide"
+	if noul >= min(review_min, hide_min):
+		return "review"
+	return "allow"
+
+
+def _safe_run_id(value: str | None) -> str:
+	cleaned = re.sub(r"[^A-Za-z0-9._-]", "", value or "")[:80]
+	return cleaned or uuid.uuid4().hex[:12]
+
+
+def persist_decision_run(run: dict[str, Any]) -> dict[str, str]:
+	"""Write one pretty JSON artifact and append the same object as JSONL."""
+	RUNS_DIR.mkdir(parents=True, exist_ok=True)
+	DECISION_JSONL.parent.mkdir(parents=True, exist_ok=True)
+	rid = _safe_run_id(str(run.get("requestId") or ""))
+	path = RUNS_DIR / f"{rid}.json"
+	path.write_text(json.dumps(run, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+	with DECISION_JSONL.open("a", encoding="utf-8") as f:
+		f.write(json.dumps(run, ensure_ascii=False, default=str) + "\n")
+	return {"json": str(path), "jsonl": str(DECISION_JSONL)}
 
 
 class ElementIn(BaseModel):
@@ -267,7 +315,9 @@ def health() -> dict[str, Any]:
 		"jev_ok": jev_ok,
 		"jev_error": jev_error,
 		"log_path": str(LOG_PATH),
-		"version": "0.2.0",
+		"decision_log": str(DECISION_JSONL),
+		"runs_dir": str(RUNS_DIR),
+		"version": SERVER_VERSION,
 	}
 	log_event("health", **body)
 	return body
@@ -290,6 +340,7 @@ def logs_tail(n: int = 80) -> dict[str, Any]:
 
 @app.post("/v1/log")
 def ingest_logs(batch: LogBatch) -> dict[str, Any]:
+	decision_runs = 0
 	for entry in batch.entries[:200]:
 		log_event(
 			"client",
@@ -298,7 +349,28 @@ def ingest_logs(batch: LogBatch) -> dict[str, Any]:
 			**{k: v for k, v in entry.items() if k != "event"},
 			clientEvent=entry.get("event") or entry.get("msg") or "log",
 		)
-	return {"ok": True, "accepted": min(len(batch.entries), 200)}
+		if entry.get("event") == "decision_run" and isinstance(entry.get("run"), dict):
+			persist_decision_run(entry["run"])
+			decision_runs += 1
+	return {"ok": True, "accepted": min(len(batch.entries), 200), "decisionRuns": decision_runs}
+
+
+@app.get("/v1/runs/latest")
+def latest_run() -> dict[str, Any]:
+	if not RUNS_DIR.exists():
+		raise HTTPException(status_code=404, detail="no runs")
+	files = sorted(RUNS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+	if not files:
+		raise HTTPException(status_code=404, detail="no runs")
+	return json.loads(files[0].read_text(encoding="utf-8"))
+
+
+@app.get("/v1/runs/{run_id}")
+def get_run(run_id: str) -> dict[str, Any]:
+	path = RUNS_DIR / f"{_safe_run_id(run_id)}.json"
+	if not path.exists():
+		raise HTTPException(status_code=404, detail="run not found")
+	return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.post("/v1/classify", response_model=ClassifyResponse)
@@ -538,6 +610,8 @@ class PageJudgeResponse(BaseModel):
 	site_type_probabilities: dict[str, float]
 	elements: list[ElementJudgment]
 	ms: int
+	hideMin: float = 0.75
+	reviewMin: float = REVIEW_MIN
 	jev_model: str | None = None
 	truncated: bool = False
 
@@ -718,12 +792,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 				noul = max(noul, 0.9)
 				reason = "s1_plus_adhost_prior"
 
-		if noul >= hide_min:
-			action: Literal["hide", "review", "allow"] = "hide"
-		elif noul >= 0.45:
-			action = "review"
-		else:
-			action = "allow"
+		action = action_for_noul(noul, hide_min)
 
 		judgments.append(
 			ElementJudgment(id=el.id, noul=round(noul, 4), action=action, reason=reason)
@@ -760,6 +829,8 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		site_type_probabilities=site_probs,
 		elements=judgments,
 		ms=ms,
+		hideMin=hide_min,
+		reviewMin=REVIEW_MIN,
 		jev_model=jev_model,
 		truncated=truncated,
 	)

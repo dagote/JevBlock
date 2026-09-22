@@ -9,6 +9,7 @@ __pycache__/
 # logs & caches
 logs/
 *.jsonl
+!fixtures/*.jsonl
 *.log
 
 # built extension packages (rebuild from extension/)
