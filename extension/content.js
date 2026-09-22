@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.7 — page judge, block path, review log.
+ * Adgate 0.0.8 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.7';
+const CLIENT = 'extension-0.0.8';
 
 let suppressMutations = false;
 
@@ -186,6 +186,50 @@ function removeAdvertisementWidgets(doc) {
       noul: 1,
       action: 'hide',
       reason,
+      removed: outcome.removed,
+      cascadeParents: outcome.cascade,
+      before: outcome.before,
+    });
+  });
+  return rows;
+}
+
+const CLB_CONTAINER_RE = /__clb-\S*_container/;
+
+/** Issue #2: Clickadu-style __clb-*_container creatives left after Advertisement widgets are removed. */
+function findClbContainers(doc) {
+  const root = typeof doc.querySelectorAll === 'function' ? doc : doc.documentElement || doc.body;
+  if (!root || !root.querySelectorAll) return [];
+  const hits = [];
+  root.querySelectorAll('[id*="__clb-"], [class*="__clb-"]').forEach((el) => {
+    if (!CLB_CONTAINER_RE.test(`${el.id || ''} ${cls(el)}`)) return;
+    if (hits.some((prev) => prev === el || (prev.contains && prev.contains(el)))) return;
+    hits.push(el);
+  });
+  return hits;
+}
+
+function removeClbContainers(doc) {
+  const rows = [];
+  findClbContainers(doc).forEach((el, i) => {
+    if (!el.isConnected) return;
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    const outcome = hideEl(el, 1, true);
+    rows.push({
+      id: `c${i}`,
+      tag: String(el.tagName || '').toLowerCase(),
+      src: el.getAttribute('src'),
+      href: null,
+      classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
+      idAttr: el.id || null,
+      role: el.getAttribute('role'),
+      rect: null,
+      text,
+      fixedOrSticky: false,
+      discover: 'force_hide_clb_container',
+      noul: 1,
+      action: 'hide',
+      reason: 'force_hide_clb_container',
       removed: outcome.removed,
       cascadeParents: outcome.cascade,
       before: outcome.before,
@@ -408,6 +452,7 @@ async function runJudge(trigger) {
 
   if (blockEnabled) {
     decisionRows.push(...removeAdvertisementWidgets(document));
+    decisionRows.push(...removeClbContainers(document));
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
@@ -630,7 +675,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.7-review',
+    mode: '0.0.8-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

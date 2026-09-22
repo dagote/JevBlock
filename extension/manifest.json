@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.7",
-  "description": "0.0.7 — Block force-hides Advertisement Elementor widgets before JEV",
+  "version": "0.0.8",
+  "description": "0.0.8 — Block force-hides __clb containers before JEV",
   "permissions": [
     "storage",
     "activeTab",
