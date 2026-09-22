@@ -74,13 +74,21 @@ function discoverLine(decisions) {
   return [...counts.entries()].map(([key, count]) => `${key} ${count}`).join(' · ');
 }
 
+function classText(row) {
+  if (row.hostOmittedKind && row.kind) return `Class ${row.kind} · host omitted kind`;
+  if (row.hostOmittedKind) return 'host omitted kind';
+  if (row.kind) return `Class ${row.kind}`;
+  return '';
+}
+
 function renderCard(row) {
   const card = el('article', 'card');
   const before = el('div');
   before.append(el('div', 'kicker', 'Before'));
   before.append(el('div', '', `${row.tag || 'node'} · ${row.id}`));
   before.append(el('div', 'meta', `Found via ${row.discover || 'unspecified'}`));
-  if (row.kind) before.append(el('div', 'meta', `Class ${row.kind}`));
+  const classLabel = classText(row);
+  if (classLabel) before.append(el('div', 'meta', classLabel));
   const bits = [];
   if (row.href) bits.push(`href ${row.href}`);
   if (row.src) bits.push(`src ${row.src}`);
@@ -109,7 +117,7 @@ function renderCard(row) {
   );
   after.append(badge);
   const why = [
-    row.kind ? `class ${row.kind}` : null,
+    classLabel ? classLabel.replace(/^Class /, 'class ') : null,
     row.action || '—',
     row.reason || 'no reason',
     row.removed && String(row.reason || '').startsWith('rank_') ? 'user rank' : null,

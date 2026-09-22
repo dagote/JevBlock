@@ -75,7 +75,7 @@ test('content uses safeJudge for manual scan and limits classify boot storms', (
   const src = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
   assert.match(src, /ADGATE_SCAN[\s\S]*safeJudge\(['"]manual['"]\)/);
   assert.equal(src.includes("runJudge('manual')"), false);
-  const bootBlock = src.slice(src.indexOf("mode: '0.1.7-classify'"));
+  const bootBlock = src.slice(src.indexOf("mode: '0.1.8-classify'"));
   assert.match(bootBlock, /safeJudge\(['"]boot['"]\)/);
   assert.equal(bootBlock.includes("safeJudge('boot2')"), true);
   const classifyBoot = bootBlock.match(

@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.7 — JEV kind classify + user ranks; one neighborhood re-classify after hide.
+ * Adgate 0.1.8 — JEV kind classify + user ranks; collapse empty ad rails after hide.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -20,7 +20,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.7';
+const CLIENT = 'extension-0.1.8';
 
 let suppressMutations = false;
 
@@ -45,10 +45,35 @@ function cls(el) {
   return String(el.className.baseVal || '');
 }
 
+function isFullBleedBox(el) {
+  const c = cls(el);
+  if (/\bh-full\b/.test(c) && /\bw-full\b/.test(c)) return true;
+  try {
+    const r = el.getBoundingClientRect();
+    const vp = Math.max(window.innerWidth * window.innerHeight, 1);
+    if ((r.width * r.height) / vp >= 0.4) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function shellHasRealContent(el) {
+  const fn = globalThis.AdgateCollapse?.hasMeaningfulContent;
+  if (typeof fn !== 'function') return true;
+  try {
+    return fn(el) !== false;
+  } catch {
+    return true;
+  }
+}
+
 function isLayoutShell(el) {
   if (!(el instanceof Element)) return true;
   const tag = el.tagName.toLowerCase();
   if (['html', 'body', 'main', 'header', 'nav', 'footer'].includes(tag)) return true;
+  const role = String(el.getAttribute?.('role') || '').toLowerCase();
+  if (['main', 'banner', 'navigation', 'contentinfo'].includes(role)) return true;
   let pos = '';
   try {
     pos = getComputedStyle(el).position;
@@ -57,18 +82,34 @@ function isLayoutShell(el) {
   }
   const overlay = pos === 'fixed' || pos === 'sticky';
   if (['article', 'section'].includes(tag) && !overlay) return true;
-  const c = cls(el);
-  if (!overlay && /\bh-full\b/.test(c) && /\bw-full\b/.test(c)) return true;
-  if (!overlay) {
-    try {
-      const r = el.getBoundingClientRect();
-      const vp = Math.max(window.innerWidth * window.innerHeight, 1);
-      if ((r.width * r.height) / vp >= 0.4) return true;
-    } catch {
-      /* ignore */
-    }
+  if (overlay) return false;
+  if (!isFullBleedBox(el)) return false;
+  // Empty full-bleed columns are ad rails, not page chrome. Contentful ones
+  // stay protected so hide pulls the creative and collapse removes the gap.
+  if (!shellHasRealContent(el)) return false;
+  return true;
+}
+
+function blankFrame(frame) {
+  try {
+    frame.setAttribute('src', 'about:blank');
+  } catch {
+    /* ignore */
   }
-  return false;
+  try {
+    frame.src = 'about:blank';
+  } catch {
+    /* ignore */
+  }
+}
+
+function collapseFrom(node) {
+  if (!node || node.isConnected === false) return [];
+  try {
+    return globalThis.AdgateCollapse?.collapseEmptyAncestors(node) || [];
+  } catch {
+    return [];
+  }
 }
 
 function extractPage() {
@@ -458,34 +499,36 @@ function hideEl(el, noul, slot) {
   if (!el || !el.isConnected) return { removed: false, cascade: [], before: null };
   if (!slot && isLayoutShell(el) && el.tagName !== 'IFRAME') {
     const ifr = el.querySelector('iframe');
-    if (ifr) return hideEl(ifr, noul, false);
+    if (ifr) {
+      const outcome = hideEl(ifr, noul, false);
+      if (!el.isConnected) return outcome;
+      const more = collapseFrom(el);
+      return {
+        removed: outcome.removed || more.length > 0,
+        cascade: outcome.cascade.concat(more),
+        before: outcome.before,
+      };
+    }
     log('warn', 'skip_layout', { tag: el.tagName, cls: cls(el).slice(0, 60) });
     return { removed: false, cascade: [], before: null };
   }
   const before = snapshotEl(el);
   el.setAttribute('data-adgate-blocked', String(noul));
-  if (el.tagName === 'IFRAME') {
-    try {
-      el.src = 'about:blank';
-    } catch {
-      /* ignore */
-    }
-  }
-  el.querySelectorAll?.('iframe').forEach((f) => {
-    try {
-      f.src = 'about:blank';
-    } catch {
-      /* ignore */
-    }
-  });
+  if (el.tagName === 'IFRAME') blankFrame(el);
+  el.querySelectorAll?.('iframe').forEach((frame) => blankFrame(frame));
   const parent = el.parentElement;
   try {
     el.remove();
   } catch {
-    el.style.setProperty('display', 'none', 'important');
-    return { removed: false, cascade: [], before };
+    try {
+      el.style.setProperty('display', 'none', 'important');
+    } catch {
+      /* ignore */
+    }
+    const cascade = collapseFrom(parent);
+    return { removed: cascade.length > 0, cascade, before };
   }
-  const cascade = globalThis.AdgateCollapse?.collapseEmptyAncestors(parent) || [];
+  const cascade = collapseFrom(parent);
   return { removed: true, cascade, before };
 }
 
@@ -746,11 +789,12 @@ async function classifyPicked({
       action: j.action,
       reason: j.reason,
       kind: j.kind || 'other',
+      hostOmittedKind: false,
     };
     const rankWantsHide = ranked.hide === true || ranked.action === 'hide';
     let action = ranked.action || j.action;
     let reason = ranked.reason || j.reason;
-    const kind = ranked.kind || j.kind || 'other';
+    const kind = ranked.hostOmittedKind ? ranked.kind || '' : ranked.kind || j.kind || 'other';
     if (cheatForced && action !== 'hide') {
       action = 'hide';
       reason = `client_${ser.discover || 'ad_slot'}`;
@@ -788,6 +832,7 @@ async function classifyPicked({
       discover: ser.discover || '',
       noul: j.noul,
       kind,
+      hostOmittedKind: ranked.hostOmittedKind === true,
       action: !blockEnabled && action === 'hide' ? 'review' : action,
       reason,
       removed,
@@ -1062,7 +1107,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.7-classify',
+    mode: '0.1.8-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,

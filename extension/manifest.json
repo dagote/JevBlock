@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.1.7",
-  "description": "0.1.7 — Neighborhood re-classify after rank hide; default scorer jev-tiny",
+  "version": "0.1.8",
+  "description": "0.1.8 — Collapse empty ad rails; missing host kind counts as ad when hide or noul is high",
   "permissions": [
     "storage",
     "activeTab",

@@ -321,11 +321,20 @@
       line(panel, 'err', state.error);
     } else if (judgment) {
       panel.dataset.jevPickStatus = 'ok';
+      const resolved = globalThis.JevPickHostKind?.resolveHostKind(judgment, 0.75) || {
+        kind: judgment.kind || '',
+        hostOmittedKind: !judgment.kind,
+      };
       const kind = document.createElement('div');
       kind.className = 'kind';
-      kind.style.color = kindColor(judgment.kind);
-      kind.dataset.jevKind = judgment.kind || '';
-      kind.textContent = judgment.kind || 'unknown kind';
+      kind.style.color = kindColor(resolved.kind);
+      kind.dataset.jevKind = resolved.kind || '';
+      kind.dataset.jevKindOmitted = resolved.hostOmittedKind ? 'true' : 'false';
+      kind.textContent = resolved.hostOmittedKind
+        ? resolved.kind
+          ? `${resolved.kind} · host omitted kind`
+          : 'host omitted kind'
+        : resolved.kind || 'host omitted kind';
       panel.appendChild(kind);
       const noul = line(panel, 'meta', `noul ${formatNoul(judgment.noul)}`);
       noul.dataset.jevNoul = String(judgment.noul ?? '');

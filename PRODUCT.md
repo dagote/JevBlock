@@ -1,4 +1,4 @@
-# Adgate 0.1.7 — System One page classify + user ranks
+# Adgate 0.1.8 — System One page classify + user ranks
 
 ## Idea
 
@@ -61,7 +61,7 @@ decision log for review mode
 
 Defaults: hide **ad**, **promo**, and **tracking_chrome** at noul ≥ 0.75. **unrelated_inject** and **donate_ask** are off (enable + set threshold to use). Persist in `chrome.storage.sync.ranks`.
 
-Decision reason when a rank fires: `rank_<kind>` (shown in the review UI).
+Decision reason when a rank fires: `rank_<kind>` (shown in the review UI). If hosted page-judge omits `kind`, a hide action or high noul is treated as `ad` and the review text says host omitted kind. Allow with low noul is left unlabeled. A literal kind such as `unknown` is not rewritten.
 
 ## Extreme force-hide cheats (legacy)
 
@@ -92,4 +92,4 @@ Page-judge uses `noul` (ad / unrelated) and `choice` (site type and element kind
 
 ## Versions
 
-Extension **0.1.7**. Server **0.3.2**. After a rank hide, one neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks (no Extreme force-hide). The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).
+Extension **0.1.8**. Server **0.3.2**. After a rank hide, empty ad rails collapse (blank or zero-size iframes do not count as content; landmarks stay) and one neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks (no Extreme force-hide). The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).
