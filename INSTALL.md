@@ -1,8 +1,8 @@
 # Install notes
 
-The unpacked extension version in this repo is `extension/manifest.json` (currently **0.1.7**). The 0.3.3 notes below describe an older Chrome-vs-disk mismatch; they are not the current package version. Server **0.3.2** is the matching LAN adgate build. Reload the unpacked extension before a live retest. Extreme force-hide cheats default **off**. After a rank hide, one neighborhood re-classify pass judges still-visible siblings in that wrapper.
+The unpacked extension version in this repo is `extension/manifest.json` (currently **0.1.8**). The 0.3.3 notes below describe an older Chrome-vs-disk mismatch; they are not the current package version. Server **0.3.2** is the matching LAN adgate build. Reload the unpacked extension before a live retest. Extreme force-hide cheats default **off**. After a rank hide, one neighborhood re-classify pass judges still-visible siblings in that wrapper.
 
-## Service URL (0.1.7)
+## Service URL (0.1.8)
 
 Fresh installs use Dagote hosted Adgate/JEV:
 
@@ -10,7 +10,7 @@ Fresh installs use Dagote hosted Adgate/JEV:
 
 The default scorer is **jev-tiny** (0.5B). `jev-latest` and `jev-3b` remain selectable from `GET /models`.
 
-1. Load unpacked `extension/` and confirm the card says **0.1.7**.
+1. Load unpacked `extension/` and confirm the card says **0.1.8**.
 2. Paste an API key (sent as `x-api-key`; not logged). Optional if you point at LAN Adgate.
 3. Open the popup so it can `GET /models`, or click **Refresh models**. The selected id starts as `jev-tiny` unless one is already stored. Pick another id (`jev-latest`, `jev-3b`, or whatever the service lists) if you want it. The extension stores that id and sends `model` on every page-judge call.
 4. LAN fallback, not the default: Adgate `http://192.168.0.119:8770`, jev-local `http://192.168.0.119:8765`. Type the Adgate URL into Service URL if you want the LAN box. A local open-weight model is not hosted TypeSafe Jev quality.

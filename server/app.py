@@ -737,6 +737,7 @@ AD_DISCOVERS = {
 	"clb_slot",
 	"adsense",
 	"gpt_slot",
+	"data_ad_row",
 }
 
 KIND_QUESTION_INSTRUCTIONS = (
@@ -766,15 +767,16 @@ def build_element_blob(el: PageElement) -> dict[str, Any]:
 	href = el.href or ""
 	text = (el.text or "").strip()
 	discover = el.discover or ""
-	hint = None
-	if "mail-us" in src:
-		hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
-	elif _matches_ad_host(el):
-		hint = "src or href matches a known ad/tracking network — prefer kind=ad or tracking_chrome."
-	elif discover in AD_DISCOVERS:
-		hint = f"Client discover={discover} marks a likely ad/slot candidate — prefer kind=ad unless clearly nav."
-	elif re.match(r"^advertisements?$", text, re.I):
-		hint = "Visible text is an Advertisement label — prefer kind=ad."
+	hint = (getattr(el, "hint", None) or "").strip()[:140] or None
+	if not hint:
+		if "mail-us" in src:
+			hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
+		elif _matches_ad_host(el):
+			hint = "src or href matches a known ad/tracking network — prefer kind=ad or tracking_chrome."
+		elif discover in AD_DISCOVERS:
+			hint = f"Client discover={discover} marks a likely ad/slot candidate — prefer kind=ad unless clearly nav."
+		elif re.match(r"^advertisements?$", text, re.I):
+			hint = "Visible text is an Advertisement label — prefer kind=ad."
 	return {
 		"tag": el.tag,
 		"id": el.idAttr,
@@ -896,6 +898,7 @@ class PageElement(BaseModel):
 	fixedOrSticky: bool = False
 	discover: str | None = None
 	nearbyLabel: str | None = None
+	hint: str | None = None
 
 
 class PageJudgeRequest(BaseModel):

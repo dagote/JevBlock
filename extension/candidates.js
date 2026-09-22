@@ -22,6 +22,7 @@
     'clb_slot',
     'adsense',
     'gpt_slot',
+    'data_ad_row',
   ]);
   const IAB_SIZES = new Set([
     '300x250',
@@ -43,6 +44,39 @@
   const EXTERNAL_URL_RE = /^(?:https?:)?\/\/[^\s/?#]+/i;
   const STOP_TAGS = new Set(['html', 'body', 'head', 'main', 'header', 'nav', 'footer']);
   const STOP_ROLES = new Set(['main', 'banner', 'navigation', 'contentinfo']);
+  /** Hard cap so a mail page cannot stampede page-judge. */
+  const CANDIDATE_CAP = 24;
+  const REPEAT_GUARD_MS = 30000;
+  const GAM_RE =
+    /gampad|googletagservices|gpt\/pubads|gpt\.js|securepubads|doubleclick|googlesyndication|safeframe|pagead2|googleads\.g\.|adservice\.google|\/mail-us\//i;
+  const ADISH_TEXT_RE = /\bsponsored\b|\bpromotion\b|special offer|limited[- ]time/i;
+  const MAIL_CHROME_SELECTOR = [
+    '[data-test-id="toolbar"]',
+    '[data-test-id="compose"]',
+    '[data-test-id="compose-button"]',
+    '[data-test-id="folder-list"]',
+    '[data-test-id="message-list"]',
+    '[data-test-id="message-list-item"]',
+    '[data-test-id="mail-search"]',
+    '[aria-label="Folders"]',
+    '[aria-label="Compose"]',
+  ].join(',');
+  const PRESERVE_DISCOVER = new Set([
+    'ad_host_script',
+    'ad_host_href',
+    'vast_player',
+    'ad_label',
+    'blank_html_widget',
+    'role_advertisement',
+    'clb_slot',
+    'iab_slot',
+    'adsense',
+    'fixed_overlay',
+    'push_permission',
+    'widget_embed',
+  ]);
+  const JUDGE_TEXT_MAX = 180;
+  const JUDGE_HINT_MAX = 140;
 
   function classNameOf(el) {
     if (!el) return '';
@@ -268,6 +302,7 @@
     const src = (el.getAttribute && (el.getAttribute('src') || '')) || '';
     const blob = `${el.id || ''} ${classNameOf(el)} ${el.getAttribute && (el.getAttribute('title') || '')} ${el.getAttribute && (el.getAttribute('name') || '')}`;
     if (/^javascript:/i.test(src)) return true;
+    if (/^about:(?:blank|srcdoc)/i.test(src) && !isClb(el) && !elementHasDataAdAttr(el)) return true;
     if (/iubenda|privacy|recaptcha|cookiebot|cookie-law|consent/i.test(blob)) return true;
     if (!src && !isClb(el) && !isIabBox(el) && !AD_HOST_RE.test(src)) {
       const box = boxSize(el);
@@ -316,9 +351,205 @@
     return picked;
   }
 
+  function meaningfulUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    if (/^(?:javascript:|about:blank|about:srcdoc|data:|blob:|#)/i.test(raw)) return '';
+    return raw;
+  }
+
+  function hostOf(url) {
+    const raw = meaningfulUrl(url);
+    if (!raw) return null;
+    const match = /^(?:https?:)?\/\/([^/?#]+)/i.exec(raw);
+    if (match) return match[1].toLowerCase();
+    if (/^(?:https?:\/\/)?ad\.com\/?$/i.test(raw)) return 'ad.com';
+    return null;
+  }
+
+  function firstChildUrl(el, selector, attr) {
+    if (!el || !el.querySelectorAll) return '';
+    const nodes = el.querySelectorAll(selector);
+    for (let i = 0; i < nodes.length; i++) {
+      const url = meaningfulUrl(nodes[i].getAttribute(attr));
+      if (url) return url;
+    }
+    return '';
+  }
+
+  /** Lift the first real child iframe src / anchor href onto the candidate. */
+  function promoteAssets(el) {
+    const tag = String((el && el.tagName) || '').toLowerCase();
+    let href = meaningfulUrl(el && el.getAttribute && el.getAttribute('href'));
+    let src = meaningfulUrl(el && el.getAttribute && (el.getAttribute('src') || el.getAttribute('data')));
+    let promoted = '';
+    if (!src) {
+      const childSrc = firstChildUrl(el, 'iframe[src]', 'src');
+      if (childSrc) {
+        src = childSrc;
+        promoted = 'iframe';
+      }
+    }
+    if (!href) {
+      const childHref = firstChildUrl(el, 'a[href]', 'href');
+      if (childHref) {
+        href = childHref;
+        if (!promoted) promoted = 'a';
+      }
+    }
+    if (tag === 'iframe' && src) promoted = promoted || 'iframe';
+    return {
+      href: href || null,
+      src: src || null,
+      hrefHost: hostOf(href),
+      srcHost: hostOf(src),
+      promoted,
+    };
+  }
+
+  function elementHasDataAdAttr(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.hasAttribute) {
+      if (
+        el.hasAttribute('data-ad') ||
+        el.hasAttribute('data-ad-client') ||
+        el.hasAttribute('data-ad-slot') ||
+        el.hasAttribute('data-ad-format') ||
+        el.hasAttribute('data-google-query-id')
+      ) {
+        return true;
+      }
+    }
+    const id = String(el.id || '');
+    if (/div-gpt-ad|google_ads_iframe|google_ads/i.test(id)) return true;
+    const classes = classNameOf(el);
+    if (/\badsbygoogle\b|\bgoogle-auto-placed\b/.test(classes)) return true;
+    return false;
+  }
+
+  function matchesSelector(el, selector) {
+    if (!el || !selector) return false;
+    try {
+      if (el.matches && el.matches(selector)) return true;
+    } catch {
+      /* invalid selector in a stub DOM */
+    }
+    try {
+      if (el.closest && el.closest(selector)) return true;
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  function isPrimaryMailChrome(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (matchesSelector(el, MAIL_CHROME_SELECTOR)) return true;
+    const blob = `${el.id || ''} ${classNameOf(el)}`;
+    return /\b(mail-toolbar|folder-list|message-list-item|compose-button)\b/i.test(blob);
+  }
+
+  function isEmptyPresentationSpacer(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (isBlankHtmlWidget(el) || elementHasDataAdAttr(el)) return false;
+    const promoted = promoteAssets(el);
+    if (promoted.src || promoted.href) return false;
+    if (visibleText(el)) return false;
+    const role = String((el.getAttribute && el.getAttribute('role')) || '').toLowerCase();
+    const blob = `${el.id || ''} ${classNameOf(el)}`;
+    if (role === 'presentation' || role === 'none' || role === 'separator') return true;
+    if (/\b(spacer|rail-gap|layout-gap|divider|separator)\b/i.test(blob)) return true;
+    const box = boxSize(el);
+    if (box.h > 0 && box.h <= 12 && box.w >= 40) return true;
+    return false;
+  }
+
+  function refineDiscover(el, discover, src, href) {
+    const current = discover || '';
+    const dataAd = elementHasDataAdAttr(el);
+    const network = GAM_RE.test(src || '') || GAM_RE.test(href || '') || AD_HOST_RE.test(src || '') || AD_HOST_RE.test(href || '');
+    const tag = String((el && el.tagName) || '').toLowerCase();
+    const promotedFrame = !!(src && el && el.querySelector && el.querySelector('iframe[src]') && tag !== 'iframe');
+    if (current === 'gpt_slot' || (dataAd && !PRESERVE_DISCOVER.has(current))) return 'data_ad_row';
+    if (PRESERVE_DISCOVER.has(current)) return current;
+    if (network) return 'ad_host_asset';
+    if (tag === 'iframe' || promotedFrame) return 'iframe';
+    return current;
+  }
+
+  function scoringHint(fields) {
+    const discover = fields.discover || '';
+    const src = fields.src || '';
+    const href = fields.href || '';
+    const text = fields.text || '';
+    const nearby = fields.nearbyLabel || '';
+    const parts = [];
+    if (discover === 'data_ad_row') parts.push('data-ad row');
+    if (discover === 'ad_host_asset' || GAM_RE.test(src) || GAM_RE.test(href) || AD_HOST_RE.test(src) || AD_HOST_RE.test(href)) {
+      parts.push('ad-network asset');
+    }
+    if (discover === 'iframe') parts.push('iframe');
+    if (/mail-us/i.test(src)) parts.push('AOL mail-us unit');
+    if (/^advertisements?$/i.test(text) || /^advertisements?$/i.test(nearby)) parts.push('Advertisement label');
+    if (!parts.length) return null;
+    return parts.join('; ').slice(0, JUDGE_HINT_MAX);
+  }
+
+  /**
+   * Fields that change hosted page-judge scoring.
+   * classes, idAttr, ariaLabel, testId, and HTML dumps stay off this object.
+   */
+  function toJudgeElement(row) {
+    const src = row || {};
+    const out = {
+      id: src.id,
+      tag: src.tag || '',
+      fixedOrSticky: !!src.fixedOrSticky,
+    };
+    if (src.role) out.role = src.role;
+    if (src.text) out.text = String(src.text).slice(0, JUDGE_TEXT_MAX);
+    if (src.nearbyLabel) out.nearbyLabel = String(src.nearbyLabel).slice(0, 80);
+    if (src.href) out.href = src.href;
+    if (src.src) out.src = src.src;
+    if (src.hrefHost) out.hrefHost = src.hrefHost;
+    if (src.srcHost) out.srcHost = src.srcHost;
+    if (src.rect) out.rect = src.rect;
+    if (src.discover) out.discover = src.discover;
+    if (src.hint) out.hint = String(src.hint).slice(0, JUDGE_HINT_MAX);
+    return out;
+  }
+
+  function judgeFingerprint(page, elements) {
+    const info = page || {};
+    const head = `${info.url || ''}|${info.title || ''}`;
+    const body = (elements || []).map((el) =>
+      [el.id, el.tag, el.discover || '', el.src || '', el.href || '', el.text || '', el.role || ''].join('\u001f'),
+    );
+    return `${head}\n${body.join('\n')}`;
+  }
+
+  /** Skip a repeat boot/mutation judge when the slim payload has not changed. Manual always runs. */
+  function createRepeatGuard(ttlMs) {
+    const ttl = Number(ttlMs) > 0 ? Number(ttlMs) : REPEAT_GUARD_MS;
+    let lastKey = '';
+    let lastAt = 0;
+    return {
+      duplicate(key, now, trigger) {
+        if (trigger === 'manual') return false;
+        if (!key || key !== lastKey) return false;
+        return Number(now) - lastAt < ttl;
+      },
+      commit(key, now) {
+        lastKey = key || '';
+        lastAt = Number(now) || 0;
+      },
+    };
+  }
+
   function collectCandidates(doc, hooks) {
     const options = hooks || {};
-    const max = Number(options.max) || 24;
+    const requested = Number(options.max) || CANDIDATE_CAP;
+    const max = Math.min(Math.max(requested, 1), CANDIDATE_CAP);
     const found = new Map();
 
     function add(el, discover, pri, evidence) {
@@ -326,11 +557,23 @@
       const tag = String(el.tagName || '').toLowerCase();
       if (['style', 'link', 'meta', 'noscript', 'html', 'body', 'head'].includes(tag)) return;
       if (tag !== 'script' && isLandmark(el)) return;
+      if (isEmptyPresentationSpacer(el)) return;
       // Prefer content boxes over primary nav CTAs / menu chrome.
       if (el.closest && el.closest('nav, header, .main-header-bar, #primary-site-navigation, .menu-link')) {
         if (!FORCED_HIDE.has(discover) && discover !== 'fixed_overlay' && discover !== 'push_permission') {
           return;
         }
+      }
+      if (isPrimaryMailChrome(el)) {
+        const url = `${(el.getAttribute && (el.getAttribute('src') || el.getAttribute('href'))) || ''} ${evidence || ''}`;
+        const strong =
+          FORCED_HIDE.has(discover) ||
+          discover === 'data_ad_row' ||
+          discover === 'fixed_overlay' ||
+          elementHasDataAdAttr(el) ||
+          AD_HOST_RE.test(url) ||
+          GAM_RE.test(url);
+        if (!strong) return;
       }
       const prev = found.get(el);
       if (prev && FORCED_HIDE.has(prev.discover) && !FORCED_HIDE.has(discover)) return;
@@ -351,13 +594,20 @@
       scope.querySelectorAll('a[href]').forEach((anchor) => {
         const href = anchor.getAttribute('href') || '';
         if (AD_HOST_RE.test(href)) add(anchor, 'ad_host_href', 970000, href);
-        else if (isExternalUrl(href, options.hostname)) add(anchor, 'external_href', 880000, href);
+        else if (isExternalUrl(href, options.hostname)) {
+          const text = visibleText(anchor);
+          const prev = anchor.previousElementSibling;
+          const prevLabel = prev && /^advertisements?$/i.test(visibleText(prev));
+          if (prevLabel || ADISH_TEXT_RE.test(text) || elementHasDataAdAttr(anchor)) {
+            add(anchor, prevLabel ? 'ad_label' : 'external_href', prevLabel ? 870000 : 860000, href);
+          }
+        }
       });
 
       scope.querySelectorAll('script[src], iframe, ins, object, embed, img[src]').forEach((el) => {
         const tag = el.tagName.toLowerCase();
         const url = el.getAttribute('src') || el.getAttribute('data') || '';
-        const hostish = AD_HOST_RE.test(url);
+        const hostish = AD_HOST_RE.test(url) || GAM_RE.test(url);
         const external = isExternalUrl(url, options.hostname);
         if (tag === 'script') {
           if (!hostish && !external) return;
@@ -436,10 +686,11 @@
 
       scope
         .querySelectorAll(
-          '[data-ad-client], [data-ad-slot], ins.adsbygoogle, .google-auto-placed, [id*="google_ads"], [id*="div-gpt-ad"]',
+          '[data-ad], [data-ad-client], [data-ad-slot], [data-ad-format], [data-google-query-id], ins.adsbygoogle, .google-auto-placed, [id*="google_ads"], [id*="div-gpt-ad"]',
         )
         .forEach((el) => {
-          add(slotForAsset(el), 'gpt_slot', 930000, el.getAttribute('src') || '');
+          const child = firstChildUrl(el, 'iframe[src]', 'src');
+          add(slotForAsset(el), 'data_ad_row', 968000, child || el.getAttribute('src') || '');
         });
 
       let checked = 0;
@@ -451,7 +702,8 @@
         if (el.querySelector && el.querySelector('h1, h2, nav, .elementor-widget-text-editor')) return;
         const role = (el.getAttribute('role') || '').toLowerCase();
         const blob = `${classNameOf(el)} ${el.id || ''} ${visibleText(el)}`;
-        if (role === 'dialog' || role === 'alertdialog' || OVERLAY_RE.test(blob)) {
+        const adishOverlay = OVERLAY_RE.test(blob) || ADISH_TEXT_RE.test(blob) || adUrlsIn(el).length > 0;
+        if ((role === 'dialog' || role === 'alertdialog' || OVERLAY_RE.test(blob)) && adishOverlay) {
           add(el, 'fixed_overlay', 880000, '');
           return;
         }
@@ -667,13 +919,20 @@
     let text = visibleText(el);
     if (text.length > 180) text = text.slice(0, 180);
     const tag = String(el.tagName || '').toLowerCase();
-    let href = el.getAttribute('href');
-    let src = el.getAttribute('src') || el.getAttribute('data') || null;
-    const evidence = item.evidence || '';
-    if (evidence && AD_HOST_RE.test(evidence)) {
-      if (tag === 'a') {
-        if (!href || !AD_HOST_RE.test(href)) href = evidence;
-      } else if (!src || !AD_HOST_RE.test(src)) {
+    const promoted = promoteAssets(el);
+    let href = promoted.href;
+    let src = promoted.src;
+    const evidence = meaningfulUrl(item.evidence || '');
+    const evidenceNetwork = !!(evidence && (AD_HOST_RE.test(evidence) || GAM_RE.test(evidence)));
+    const preferEvidence =
+      item.discover === 'ad_host_script' ||
+      item.discover === 'ad_host_href' ||
+      item.discover === 'vast_player' ||
+      item.discover === 'data_ad_row';
+    if (evidence && (preferEvidence || evidenceNetwork || (!src && !href))) {
+      if (tag === 'a' || item.discover === 'ad_host_href') {
+        if (preferEvidence || !href) href = evidence;
+      } else if (preferEvidence || !src) {
         src = evidence;
       }
     }
@@ -687,17 +946,22 @@
       const parentText = visibleText(el.parentElement);
       if (parentText && parentText.length <= 40 && parentText !== text) nearbyLabel = parentText;
     }
+    const role = el.getAttribute('role');
+    const discover = refineDiscover(el, item.discover || '', src, href);
+    const hint = scoringHint({ discover, src, href, text, nearbyLabel, role });
     return {
       id,
       tag,
       idAttr: el.id || null,
       classes: classTokens(el).slice(0, 16),
-      role: el.getAttribute('role'),
+      role,
       ariaLabel: el.getAttribute('aria-label'),
       text,
       nearbyLabel,
       href: href || null,
       src: src || null,
+      hrefHost: hostOf(href),
+      srcHost: hostOf(src),
       testId: el.getAttribute('data-test-id'),
       rect: {
         w: Math.round(rect.width || 0),
@@ -706,20 +970,31 @@
         x: Math.round((rect.left || 0) + (options.scrollX || 0)),
       },
       fixedOrSticky: pos === 'fixed' || pos === 'sticky' || pos === 'absolute',
-      discover: item.discover || '',
+      discover,
+      hint,
     };
   }
 
   return {
     AD_HOST_RE,
+    GAM_RE,
     FORCED_HIDE,
+    CANDIDATE_CAP,
+    REPEAT_GUARD_MS,
     NEIGHBORHOOD_MAX,
     collectCandidates,
     collectNeighborhoodCandidates,
     neighborhoodWrapper,
     shouldRunNeighborhoodFollowup,
     serializeCandidate,
+    toJudgeElement,
+    promoteAssets,
+    hostOf,
+    judgeFingerprint,
+    createRepeatGuard,
     isForcedHide,
+    isEmptyPresentationSpacer,
+    isPrimaryMailChrome,
     slotForAsset,
     adUrlsIn,
     visibleText,

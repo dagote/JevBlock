@@ -2,7 +2,7 @@
 
 Chrome extension + intranet service that uses a **System One / Jev-compatible** judge to score page elements as ads (or unrelated chrome) given whole-page context.
 
-Extension version is `extension/manifest.json` (**0.1.7**). Server version is **0.3.2**. Page-judge timeout is 15 minutes with background single-flight; the flight helper stays inside a factory so the service worker can `importScripts` it without a duplicate global binding. Force-hide cheats stay off. Block OFF = classify-only decision log. After a rank hide, one neighborhood re-classify pass judges still-visible siblings in that wrapper with the same ranks.
+Extension version is `extension/manifest.json` (**0.1.8**). Server version is **0.3.2**. Page-judge timeout is 15 minutes with background single-flight; the flight helper stays inside a factory so the service worker can `importScripts` it without a duplicate global binding. Force-hide cheats stay off. Block OFF = classify-only decision log. After a rank hide, one neighborhood re-classify pass judges still-visible siblings in that wrapper with the same ranks.
 
 **Service URL** defaults to Dagote hosted Adgate/JEV: `https://www.dagote.ai/api/jev`. Set an API key in the popup (`x-api-key`). The default scorer is **jev-tiny** (0.5B) on Dagote. You can still pick `jev-latest` or `jev-3b` from `GET /models`. The extension always sends that `model` id on `POST /v1/page-judge` and does not rely on the server default alone. A stored model is left as-is; only a missing model is filled with `jev-tiny`. A Dagote `429` / busy reply (“Already generating a reply”) is retried using `retryAfter`. A local open-weight jev-local is **not** the same quality as hosted TypeSafe Jev. LAN fallback (not the default): Adgate `http://192.168.0.119:8770`, jev-local `http://192.168.0.119:8765`.
 
@@ -24,6 +24,8 @@ Extension version is `extension/manifest.json` (**0.1.7**). Server version is **
 | **0.45** ≤ noul < `hideMin` | `review` | Kept. Shown in the review band for tuning |
 | < 0.45 | `allow` | Kept |
 
+Hosted Dagote page-judge often returns `{id, noul, action, reason}` and omits `kind`. The extension then applies the ad rank only when noul is at least hideMin (or the host action is hide) and labels the row `kind_missing_host`. It does not pretend the host returned `kind`. The live jev-tiny mail matrix is `docs/contract-matrix.md`.
+
 Empty-parent collapse stops at `html`, `body`, `main`, `header`, `nav`, and `footer` (and the landmark roles `main`, `banner`, `navigation`, `contentinfo`). It also stops at full-page shells (`h-full` + `w-full`, or about 40% of the viewport) and common app roots (`root`, `app`, `__next`, `__nuxt`). A parent is empty when it has no real text, media, or controls left. A lone “Advertisement” label does not count. `aside` / `div` shells can collapse; 1×1 tracking pixels do not keep a shell alive.
 
 ## Repo layout
@@ -35,6 +37,7 @@ Empty-parent collapse stops at `html`, `body`, `main`, `header`, `nav`, and `foo
 | `fixtures/decision-log.sample.json` | Dry-run decision log (no live scorer) |
 | `scripts/tail-logs.sh` | Inspect JSONL logs |
 | `PRODUCT.md` | Product / decision model notes |
+| `docs/contract-matrix.md` | Live jev-tiny mail page-judge request and response |
 | `INSTALL.md` | Install / stale-build notes |
 
 ## Quick start
@@ -79,7 +82,7 @@ Set those env vars to keep an older absolute path. `./scripts/tail-logs.sh` read
 ```json
 {
   "page": { "url": "...", "hostname": "...", "title": "...", "excerpt": "...", "headings": [] },
-  "elements": [{ "id": "e0", "tag": "iframe", "src": "...", "classes": [], "rect": {} }],
+  "elements": [{ "id": "e0", "tag": "iframe", "src": "...", "srcHost": "...", "discover": "ad_host_asset", "rect": {}, "hint": "ad-network asset" }],
   "hideMin": 0.75,
   "model": "jev-tiny"
 }
@@ -110,9 +113,9 @@ Target: https://canyoublockit.com/extreme-test/
 This page is a stress catalog (pop-unders, interstitials, push prompts, in-page push, banners, ad hosts). It is not a claim that every cell is blocked.
 
 1. Start jev-local and adgate (above). Confirm `GET /health` shows `jev_ok` if the scorer is up.
-2. Load unpacked `extension/` and confirm the card says **0.1.7**. Reload if it still says 0.1.6 or older.
+2. Load unpacked `extension/` and confirm the card says **0.1.8**. Reload if it still says 0.1.6 or older.
 3. Service URL defaults to Dagote. Set the API key. The default model is `jev-tiny`; pick `jev-latest` or `jev-3b` from `GET /models` if you want a larger scorer. LAN Adgate `http://192.168.0.119:8770` still works if you type it in. Confirm `GET /health` on that service. Enable **Block**. Configure hide ranks (ad/promo on by default). Leave Extreme force-hide cheats **off**.
-4. Open a page, reload so 0.1.7 attaches, click **Judge this tab** with Block **off** first. Review should list candidates with kind+noul (Advertisement/ad.com should be `ad`, not `nav_chrome` or `judge_error`). Then enable Block and ranks to remove.
+4. Open a page, reload so 0.1.8 attaches, click **Judge this tab** with Block **off** first. Review should list candidates with kind+noul (Advertisement/ad.com should be `ad`, not `nav_chrome` or `judge_error`). Then enable Block and ranks to remove.
 5. Check empty parents in the “After” column (`reason: empty_parent`). The summary line starts with the candidate count. Export JSON/JSONL or reload the latest run from the review page.
 6. Optional **Advanced → Extreme early defenses**, then reload the test tab. That registers `early.js` at `document_start` in the page world (pop-under gate + notification deny + known-host node strip). **Block** also enables `rules.json` through `declarativeNetRequest` for known ad hosts. With Block off, those network rules stay disabled so the judge can still see the requests.
 7. Nodes that early defenses or DNR remove before the judge never appear in the decision log. The log is the DOM judge’s record.
@@ -126,7 +129,7 @@ server/.venv/bin/python -m unittest server.test_decision_log
 
 ## Notes
 
-- Reload **0.1.7**. Hosted Dagote is the default service and the default scorer is jev-tiny (0.5B). A local open-weight jev-local is not hosted TypeSafe Jev quality. Extreme force-hide cheats stay off for product retests. A unit test is not a live Chrome pass.
+- Reload **0.1.8**. Hosted Dagote is the default service and the default scorer is jev-tiny (0.5B). A local open-weight jev-local is not hosted TypeSafe Jev quality. Extreme force-hide cheats stay off for product retests. A unit test is not a live Chrome pass.
 - `node --test extension/*.test.js` includes ranks, cheats-default-off, and legacy Extreme remover tests (debug only). Install linkedom with `npm install` first.  
 - Page context is kept small; elements are scored **one call each**. Oversized prefixes are skipped silently for that element.  
 - Do not commit `logs/` or `*.zip` builds.
