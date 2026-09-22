@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.6 — page judge, block path, review log.
+ * Adgate 0.0.7 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.6';
+const CLIENT = 'extension-0.0.7';
 
 let suppressMutations = false;
 
@@ -137,6 +137,61 @@ function collectElements(max) {
     })),
   });
   return picked;
+}
+
+const AD_WIDGET_SRC_RE = /ybs2ffs7v\.com|fvcwqkkqmuv\.com/i;
+
+/** Issue #1: Elementor html widgets labeled Advertisement or fed by ybs/fvc scripts. */
+function findAdvertisementWidgets(doc) {
+  const root = typeof doc.querySelectorAll === 'function' ? doc : doc.documentElement || doc.body;
+  if (!root || !root.querySelectorAll) return [];
+  const hits = new Map();
+  root.querySelectorAll('.elementor-widget-html').forEach((widget) => {
+    const scripts = widget.querySelectorAll ? widget.querySelectorAll('script[src]') : [];
+    let fed = false;
+    for (let i = 0; i < scripts.length; i++) {
+      if (AD_WIDGET_SRC_RE.test(scripts[i].getAttribute('src') || '')) fed = true;
+    }
+    let labeled = false;
+    const labels = widget.querySelectorAll ? widget.querySelectorAll('center, p, span, div, label, small') : [];
+    for (let i = 0; i < labels.length; i++) {
+      const raw = labels[i].textContent || '';
+      if (raw.length > 40) continue;
+      if (/^advertisements?$/i.test(raw.replace(/\s+/g, ' ').trim())) labeled = true;
+    }
+    if (fed) hits.set(widget, 'force_hide_ad_host_widget');
+    else if (labeled) hits.set(widget, 'force_hide_advertisement_label');
+  });
+  return [...hits.entries()];
+}
+
+function removeAdvertisementWidgets(doc) {
+  const rows = [];
+  findAdvertisementWidgets(doc).forEach(([el, reason], i) => {
+    if (!el.isConnected) return;
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    const outcome = hideEl(el, 1, true);
+    rows.push({
+      id: `h${i}`,
+      tag: String(el.tagName || '').toLowerCase(),
+      src: null,
+      href: null,
+      classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
+      idAttr: el.id || null,
+      role: el.getAttribute('role'),
+      rect: null,
+      text,
+      fixedOrSticky: false,
+      discover: reason,
+      noul: 1,
+      action: 'hide',
+      reason,
+      removed: outcome.removed,
+      cascadeParents: outcome.cascade,
+      before: outcome.before,
+    });
+  });
+  return rows;
 }
 
 function hideEl(el, noul, slot) {
@@ -347,30 +402,46 @@ async function runJudge(trigger) {
 
   clearAnnotations();
   const page = extractPage();
-  const picked = collectElements(Number(settings.maxElements) || 24);
-  const hooks = layoutHooks();
-  const elements = picked.map((item, i) => globalThis.AdgateCandidates.serializeCandidate(item, `e${i}`, hooks));
-  const byId = Object.fromEntries(picked.map((item, i) => [`e${i}`, item.el]));
-
-  log('info', 'judge_start', { trigger, n: elements.length, title: page.title.slice(0, 80) });
-
-  const res = await sendMessage({
-    type: 'ADGATE_PAGE_JUDGE',
-    page,
-    elements,
-    hideMin: Number(settings.hideMin) || 0.75,
-  });
-
-  if (res?.error) {
-    log('error', 'judge_fail', { error: res.error });
-    throw new Error(res.error);
-  }
-
   const blockEnabled = settings.blockEnabled === true;
   const decisionRows = [];
   suppressMutations = true;
 
-  for (const j of res.elements || []) {
+  if (blockEnabled) {
+    decisionRows.push(...removeAdvertisementWidgets(document));
+  }
+
+  const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
+  const hooks = layoutHooks();
+  const elements = picked.map((item, i) => globalThis.AdgateCandidates.serializeCandidate(item, `e${i}`, hooks));
+  const byId = Object.fromEntries(picked.map((item, i) => [`e${i}`, item.el]));
+
+  log('info', 'judge_start', { trigger, n: elements.length, heuristic: decisionRows.length, title: page.title.slice(0, 80) });
+
+  let res = {
+    elements: [],
+    requestId: null,
+    site_type: null,
+    ms: 0,
+    hideMin: Number(settings.hideMin) || 0.75,
+    reviewMin: globalThis.AdgateDecisionLog?.REVIEW_MIN,
+  };
+  let jevError = null;
+  if (elements.length) {
+    try {
+      res = await sendMessage({
+        type: 'ADGATE_PAGE_JUDGE',
+        page,
+        elements,
+        hideMin: Number(settings.hideMin) || 0.75,
+      });
+      if (res?.error) jevError = new Error(res.error);
+    } catch (err) {
+      jevError = err;
+    }
+    if (jevError) log('error', 'judge_fail', { error: String(jevError.message || jevError), heuristic: decisionRows.length });
+  }
+
+  if (!jevError) for (const j of res.elements || []) {
     const el = byId[j.id];
     const ser = elements.find((row) => row.id === j.id) || {};
     let removed = false;
@@ -491,6 +562,7 @@ async function runJudge(trigger) {
     suppressMutations = false;
   }, 700);
 
+  if (jevError) throw jevError;
   return { ok: true, ...run };
 }
 
@@ -558,7 +630,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.6-review',
+    mode: '0.0.7-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

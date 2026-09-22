@@ -13,7 +13,7 @@ Feed **page context** (not just one node) into System One, then ask:
 page excerpt + headings + url
         +
 candidate elements (Extreme Elementor slots, Advertisement labels, __clb / IAB iframes, ad-host href/src, VAST, blank html widgets, fixed overlays)
-Extension 0.0.6 / adgate 0.2.4. Junk iframes (javascript: and iubenda) are not candidates.
+Extension 0.0.7 / adgate 0.2.4. Block on force-hides Advertisement Elementor widgets fed by ybs2ffs7v or fvcwqkkqmuv before JEV.
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)

@@ -2,7 +2,7 @@
 
 Chrome extension + intranet service that uses a **System One / Jev-compatible** judge to score page elements as ads (or unrelated chrome) given whole-page context.
 
-Extension version is `extension/manifest.json` (**0.0.6**). Server version is **0.2.4**.
+Extension version is `extension/manifest.json` (**0.0.7**). Server version is **0.2.4**. With Block on, Elementor html widgets labeled Advertisement or fed by `ybs2ffs7v.com` / `fvcwqkkqmuv.com` are removed before the JEV call (`force_hide_advertisement_label` or `force_hide_ad_host_widget`).
 
 ## How it works
 
@@ -95,9 +95,9 @@ Target: https://canyoublockit.com/extreme-test/
 This page is a stress catalog (pop-unders, interstitials, push prompts, in-page push, banners, ad hosts). It is not a claim that every cell is blocked.
 
 1. Start jev-local and adgate (above). Confirm `GET /health` shows `jev_ok` if the scorer is up.
-2. Load unpacked `extension/` and confirm the card says **0.0.6**. Reload the extension if it still says 0.0.5 or 0.0.4. Those builds reported two allowed iframes (`javascript:false` and the iubenda badge) and removed nothing.
+2. Load unpacked `extension/` and confirm the card says **0.0.7**. Reload the extension if it still says 0.0.6 or older.
 3. Set the server URL (for this machine, `http://127.0.0.1:8770`). Enable **Block — remove ads and empty parents**. Leave hide minimum at **0.75** unless you are tuning. Restart adgate and confirm `GET /health` reports **0.2.4**.
-4. Open https://canyoublockit.com/extreme-test/ and reload it so the 0.0.6 content script attaches. Wait about 15 seconds so the 1s / 4s / 8s / 14s scans can see slots injected after load. Click **Judge this tab**. Review mode opens a list of removals with scores, reasons, and **Found via** (the discovery reason). The page itself should not grow `%` chips. Expect well more than two candidates, and Found via values such as `ad_host_script`, `ad_host_href`, `ad_label`, `clb_slot`, `vast_player`, or `blank_html_widget` — not iframe alone. Advertisement labels and the yellow creative slots should be gone. The heading, Banner Ads help, Direct Link help, video help, and Push Notification Ads nav should stay. `iframe[src="javascript:false"]` and `.iubenda-ibadge` should stay.
+4. Open https://canyoublockit.com/extreme-test/ and reload it so the 0.0.7 content script attaches. Click **Judge this tab**. With Block on, Elementor html widgets that show Advertisement and load `ybs2ffs7v.com` or `fvcwqkkqmuv.com` are removed before JEV. The page itself should not grow `%` chips.
 5. Check empty parents in the “After” column (`reason: empty_parent`). The summary line starts with the candidate count. Export JSON/JSONL or reload the latest run from the review page.
 6. Optional **Advanced → Extreme early defenses**, then reload the test tab. That registers `early.js` at `document_start` in the page world (pop-under gate + notification deny + known-host node strip). **Block** also enables `rules.json` through `declarativeNetRequest` for known ad hosts. With Block off, those network rules stay disabled so the judge can still see the requests.
 7. Nodes that early defenses or DNR remove before the judge never appear in the decision log. The log is the DOM judge’s record.
@@ -111,8 +111,8 @@ server/.venv/bin/python -m unittest server.test_decision_log
 
 ## Notes
 
-- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`). Discovery of the live Extreme DOM is in the extension (`extension/candidates.js`). Reload **0.0.6** and restart adgate **0.2.4** before judging again. A hand-built `/v1/page-judge` payload is not a live pass. `node --test` against `fixtures/extreme-test.live.html` is a regression on a Chrome dump of the post-JS page; it is not a Chrome extension Block-on pass.
-- `node --test extension/*.test.js` includes `extension/candidates.test.js` (`fixtures/extreme-test.snippet.html`) and `extension/candidates.live.test.js` (`fixtures/extreme-test.live.html`, saved from Chrome after scripts ran). Install the linkedom dev dependency with `npm install` first.  
+- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`). Reload **0.0.7** and restart adgate **0.2.4** before judging again. A unit test is not a live Chrome pass.
+- `node --test extension/*.test.js` includes `extension/obvious.test.js` on `fixtures/issue1-advertisement-widgets.html`. Install the linkedom dev dependency with `npm install` first.  
 - Page context is kept small; elements are scored **one call each**. Oversized prefixes are skipped silently for that element.  
 - Do not commit `logs/` or `*.zip` builds.
 
