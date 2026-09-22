@@ -28,7 +28,8 @@ class DecisionLogTests(unittest.TestCase):
 			app.default_decision_log().parts[-3:],
 			("server", "logs", "decision-runs.jsonl"),
 		)
-		self.assertNotIn("ruin", str(log_path))
+		# Defaults must be under this checkout's server/, not a hardcoded absolute home path.
+		self.assertEqual(log_path.parent.parent, Path(app.SERVER_DIR))
 		self.assertEqual(app.resolve_path("/tmp/custom.jsonl", log_path), Path("/tmp/custom.jsonl"))
 		self.assertEqual(app.resolve_path(None, log_path), log_path)
 
