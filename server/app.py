@@ -19,12 +19,34 @@ from pydantic import BaseModel, Field
 
 JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
-LOG_PATH = Path(
-	os.getenv(
-		"ADGATE_LOG_PATH",
-		"/home/ruin/projects/experiments/adblock-systemone/logs/adgate.jsonl",
-	)
-)
+SERVER_DIR = Path(__file__).resolve().parent
+REVIEW_MIN = 0.45
+SERVER_VERSION = "0.3.2"
+PAGE_JUDGE_BUDGET_S = float(os.getenv("ADGATE_PAGE_JUDGE_BUDGET_S", "720"))  # 12 min overall
+PAGE_JUDGE_ELEMENT_TIMEOUT_S = float(os.getenv("ADGATE_JEV_ELEMENT_TIMEOUT_S", "90"))
+
+
+def resolve_path(env_value: str | None, default: Path) -> Path:
+	if env_value:
+		return Path(env_value)
+	return default
+
+
+def default_log_path() -> Path:
+	return SERVER_DIR / "logs" / "adgate.jsonl"
+
+
+def default_runs_dir() -> Path:
+	return SERVER_DIR / "logs" / "runs"
+
+
+def default_decision_log() -> Path:
+	return SERVER_DIR / "logs" / "decision-runs.jsonl"
+
+
+LOG_PATH = resolve_path(os.getenv("ADGATE_LOG_PATH"), default_log_path())
+RUNS_DIR = resolve_path(os.getenv("ADGATE_RUNS_DIR"), default_runs_dir())
+DECISION_JSONL = resolve_path(os.getenv("ADGATE_DECISION_LOG"), default_decision_log())
 
 THRESHOLDS = {
 	"careful": 0.85,
@@ -36,16 +58,23 @@ AD_HOST_RE = re.compile(
 	r"(doubleclick|googlesyndication|googletagservices|adservice\.google|"
 	r"amazon-adsystem|adnxs|taboola|outbrain|popads|propellerads|adsterra|"
 	r"clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|"
-	r"fvcwqkkqmuv|pagead2)",
+	r"fvcwqkkqmuv|bncloudfl|adsco\.re|antiadblocksystems|coosync\.com|"
+	r"displayendpointstarring|pagead2|(?:^|[^a-z0-9])ad\.com\b)",
 	re.I,
 )
+OVERLAY_HINT_RE = re.compile(r"interstitial|special.?offer|click here", re.I)
+PUSH_PERMISSION_RE = re.compile(
+	r"notification-permission|wants to\b.{0,80}?notifications",
+	re.I,
+)
+PRIOR_FLOOR = 0.9
 AD_HINT_RE = re.compile(
 	r"(^|[-_\s])(ad|ads|advert|sponsor|promo|banner|dfp|gpt|adsense|"
 	r"interstitial|push|overlay|popup|paywall)([-_\s]|$)",
 	re.I,
 )
 
-app = FastAPI(title="adgate", version="0.2.0")
+app = FastAPI(title="adgate", version=SERVER_VERSION)
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -63,6 +92,152 @@ def log_event(event: str, **fields: Any) -> None:
 	row = {"ts": _now(), "event": event, **fields}
 	with LOG_PATH.open("a", encoding="utf-8") as f:
 		f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+
+
+def action_for_noul(
+	noul: float, hide_min: float, review_min: float = REVIEW_MIN
+) -> Literal["hide", "review", "allow"]:
+	"""hide at hide_min (default 0.75); review band is [review_min, hide_min)."""
+	if noul >= hide_min:
+		return "hide"
+	if noul >= min(review_min, hide_min):
+		return "review"
+	return "allow"
+
+
+def _page_blob(*parts: str) -> str:
+	return " ".join(part for part in parts if part)
+
+
+def aria_ad_judgment(el: PageElement) -> tuple[float, str] | None:
+	"""Skip System One when the node already declares itself an ad. Same signal as classify aria_ad."""
+	if (el.role or "").lower() == "advertisement":
+		return 0.95, "aria_ad"
+	if el.ariaLabel and AD_HINT_RE.search(el.ariaLabel):
+		return 0.95, "aria_ad"
+	return None
+
+
+def blank_slot_judgment(el: PageElement) -> tuple[float, str] | None:
+	"""Empty Elementor html widgets are unfilled ad slots on Extreme Test."""
+	if (el.discover or "") != "blank_html_widget":
+		return None
+	if _matches_ad_host(el):
+		return None
+	return PRIOR_FLOOR, "blank_ad_slot"
+
+
+def ad_label_judgment(el: PageElement) -> tuple[float, str] | None:
+	"""Widget whose only visible text is an Advertisement label."""
+	if (el.discover or "") != "ad_label":
+		return None
+	if _matches_ad_host(el):
+		return None
+	return PRIOR_FLOOR, "ad_label"
+
+
+def _matches_ad_host(el: PageElement) -> bool:
+	return bool(AD_HOST_RE.search(el.src or "") or AD_HOST_RE.search(el.href or ""))
+
+
+def _matches_overlay(el: PageElement) -> bool:
+	if not el.fixedOrSticky:
+		return False
+	role = (el.role or "").lower()
+	if role in {"dialog", "alertdialog"}:
+		return True
+	blob = _page_blob(" ".join(el.classes), el.idAttr or "", el.text or "", el.ariaLabel or "")
+	return OVERLAY_HINT_RE.search(blob) is not None
+
+
+def _matches_push_permission(el: PageElement) -> bool:
+	blob = _page_blob(
+		" ".join(el.classes),
+		el.idAttr or "",
+		el.text or "",
+		el.ariaLabel or "",
+		el.href or "",
+	)
+	return PUSH_PERMISSION_RE.search(blob) is not None
+
+
+def apply_element_priors(
+	el: PageElement, noul: float, site_type: str, reason: str
+) -> tuple[float, str]:
+	"""Raise a low System One score. The reason string names the prior."""
+	if reason == "prefix_too_long_skipped":
+		return noul, reason
+	if reason == "s1_error_skipped" and not _matches_ad_host(el) and (el.discover or "") not in {
+		"ad_label",
+		"blank_html_widget",
+		"vast_player",
+		"iab_slot",
+		"clb_slot",
+		"ad_host_script",
+		"ad_host_href",
+		"ad_host_asset",
+	}:
+		return noul, reason
+	src = el.src or ""
+	if site_type == "mail" and "mail-us" in src and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_mail_us_prior"
+	if _matches_ad_host(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_adhost_prior"
+	if _matches_push_permission(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_push_permission_prior"
+	if _matches_overlay(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_overlay_prior"
+	if (el.discover or "") == "blank_html_widget" and not _matches_ad_host(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "blank_ad_slot"
+	if (el.discover or "") == "ad_label" and not _matches_ad_host(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "ad_label"
+	if (el.discover or "") in {"iab_slot", "clb_slot", "vast_player"} and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, el.discover
+	return noul, reason
+
+
+def extreme_test_site_bias(
+	hostname: str,
+	url: str,
+	site_type: str,
+	site_probs: dict[str, float],
+	site_conf: float,
+) -> tuple[str, float] | None:
+	"""Local 1.5B calls canyoublockit Extreme Test docs_app. Prefer marketing, else other."""
+	host = (hostname or "").lower()
+	if host.startswith("www."):
+		host = host[4:]
+	if not host:
+		match = re.search(r"https?://([^/:]+)", url or "", re.I)
+		host = match.group(1).lower() if match else ""
+		if host.startswith("www."):
+			host = host[4:]
+	if host != "canyoublockit.com" or "extreme-test" not in (url or "").lower():
+		return None
+	if site_type != "docs_app":
+		return None
+	marketing_p = float(site_probs.get("marketing") or 0.0)
+	other_p = float(site_probs.get("other") or 0.0)
+	if other_p > marketing_p:
+		return "other", other_p or site_conf
+	return "marketing", marketing_p or site_conf
+
+
+def _safe_run_id(value: str | None) -> str:
+	cleaned = re.sub(r"[^A-Za-z0-9._-]", "", value or "")[:80]
+	return cleaned or uuid.uuid4().hex[:12]
+
+
+def persist_decision_run(run: dict[str, Any]) -> dict[str, str]:
+	"""Write one pretty JSON artifact and append the same object as JSONL."""
+	RUNS_DIR.mkdir(parents=True, exist_ok=True)
+	DECISION_JSONL.parent.mkdir(parents=True, exist_ok=True)
+	rid = _safe_run_id(str(run.get("requestId") or ""))
+	path = RUNS_DIR / f"{rid}.json"
+	path.write_text(json.dumps(run, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+	with DECISION_JSONL.open("a", encoding="utf-8") as f:
+		f.write(json.dumps(run, ensure_ascii=False, default=str) + "\n")
+	return {"json": str(path), "jsonl": str(DECISION_JSONL)}
 
 
 class ElementIn(BaseModel):
@@ -267,7 +442,9 @@ def health() -> dict[str, Any]:
 		"jev_ok": jev_ok,
 		"jev_error": jev_error,
 		"log_path": str(LOG_PATH),
-		"version": "0.2.0",
+		"decision_log": str(DECISION_JSONL),
+		"runs_dir": str(RUNS_DIR),
+		"version": SERVER_VERSION,
 	}
 	log_event("health", **body)
 	return body
@@ -290,15 +467,42 @@ def logs_tail(n: int = 80) -> dict[str, Any]:
 
 @app.post("/v1/log")
 def ingest_logs(batch: LogBatch) -> dict[str, Any]:
+	decision_runs = 0
 	for entry in batch.entries[:200]:
+		fields = {
+			k: v
+			for k, v in entry.items()
+			if k not in ("event", "sessionId", "client", "clientEvent")
+		}
 		log_event(
 			"client",
 			sessionId=batch.sessionId,
 			client=batch.client,
-			**{k: v for k, v in entry.items() if k != "event"},
 			clientEvent=entry.get("event") or entry.get("msg") or "log",
+			**fields,
 		)
-	return {"ok": True, "accepted": min(len(batch.entries), 200)}
+		if entry.get("event") == "decision_run" and isinstance(entry.get("run"), dict):
+			persist_decision_run(entry["run"])
+			decision_runs += 1
+	return {"ok": True, "accepted": min(len(batch.entries), 200), "decisionRuns": decision_runs}
+
+
+@app.get("/v1/runs/latest")
+def latest_run() -> dict[str, Any]:
+	if not RUNS_DIR.exists():
+		raise HTTPException(status_code=404, detail="no runs")
+	files = sorted(RUNS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+	if not files:
+		raise HTTPException(status_code=404, detail="no runs")
+	return json.loads(files[0].read_text(encoding="utf-8"))
+
+
+@app.get("/v1/runs/{run_id}")
+def get_run(run_id: str) -> dict[str, Any]:
+	path = RUNS_DIR / f"{_safe_run_id(run_id)}.json"
+	if not path.exists():
+		raise HTTPException(status_code=404, detail="run not found")
+	return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.post("/v1/classify", response_model=ClassifyResponse)
@@ -491,6 +695,183 @@ SITE_TYPES = {
 	"other": "None of the above / unclear",
 }
 
+ELEMENT_KINDS = {
+	"main_content": (
+		"Primary article, tool, form, or media the user opened the page for. "
+		"NOT ad slots, NOT 'Advertisement' labels, NOT third-party creatives."
+	),
+	"ad": (
+		"Commercial advertisement, sponsored creative, or ad slot: "
+		"text exactly/near 'Advertisement', ad.com / ad-network href or src, "
+		"banner/iframe creative, VAST/pre-roll ad tag, GPT/AdSense unit. "
+		"Use this even when the rest of the page is a test or marketing site."
+	),
+	"promo": (
+		"First-party upsell or special offer from the same site (newsletter, upgrade). "
+		"Not a third-party ad network creative."
+	),
+	"unrelated_inject": (
+		"Third-party inject unrelated to the page purpose (widgets, surveys) that is not a clear ad."
+	),
+	"donate_ask": "Donation, tip jar, or support/paywall ask.",
+	"tracking_chrome": (
+		"Tracker, beacon, or ad-loader script/pixel with little or no visible UI "
+		"(head scripts, 1x1 pixels). Prefer ad when there is a visible Advertisement label or creative."
+	),
+	"nav_chrome": (
+		"Site navigation only: header/footer/menu/logo/skip-link. "
+		"Do NOT use for Advertisement-labeled widgets, ad.com links, VAST players, or ad iframes."
+	),
+	"other": "None of the above / unclear after reading text, href, src, and discover.",
+}
+
+AD_DISCOVERS = {
+	"ad_host_script",
+	"ad_host_href",
+	"ad_host_asset",
+	"ad_label",
+	"vast_player",
+	"blank_html_widget",
+	"role_advertisement",
+	"iab_slot",
+	"clb_slot",
+	"adsense",
+	"gpt_slot",
+}
+
+KIND_QUESTION_INSTRUCTIONS = (
+	"Classify THIS element (state.element), not the whole page. "
+	"Read text, nearbyLabel, href, src, srcHost, hrefHost, discover, and hint. "
+	"If text is 'Advertisement' or discover/href/src looks like an ad slot or ad network, choose ad. "
+	"Choose nav_chrome ONLY for real site menus/headers/footers. "
+	"Do not dump unknown or ad-like nodes into nav_chrome. "
+	"site_type describes the page; it does not make every element navigation."
+)
+
+
+def _host_of(url: str | None) -> str | None:
+	if not url:
+		return None
+	match = re.search(r"^(?:https?:)?//([^/?#]+)", url, re.I)
+	if match:
+		return match.group(1).lower()
+	if re.match(r"^(?:https?://)?ad\.com/?$", url.strip(), re.I):
+		return "ad.com"
+	return None
+
+
+def build_element_blob(el: PageElement) -> dict[str, Any]:
+	"""Compact element state for System One. Includes discover and host hints."""
+	src = el.src or ""
+	href = el.href or ""
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	hint = None
+	if "mail-us" in src:
+		hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
+	elif _matches_ad_host(el):
+		hint = "src or href matches a known ad/tracking network — prefer kind=ad or tracking_chrome."
+	elif discover in AD_DISCOVERS:
+		hint = f"Client discover={discover} marks a likely ad/slot candidate — prefer kind=ad unless clearly nav."
+	elif re.match(r"^advertisements?$", text, re.I):
+		hint = "Visible text is an Advertisement label — prefer kind=ad."
+	return {
+		"tag": el.tag,
+		"id": el.idAttr,
+		"classes": el.classes[:8],
+		"role": el.role,
+		"ariaLabel": ((el.ariaLabel or "")[:80] or None),
+		"text": text[:100] or None,
+		"nearbyLabel": ((el.nearbyLabel or "")[:80] or None),
+		"href": (href[:160] or None),
+		"src": (src[:200] or None),
+		"hrefHost": _host_of(href),
+		"srcHost": _host_of(src),
+		"testId": el.testId,
+		"rect": el.rect,
+		"fixedOrSticky": el.fixedOrSticky,
+		"discover": discover or None,
+		"hint": hint,
+	}
+
+
+def build_kind_question(element_id: str) -> dict[str, Any]:
+	return {
+		"type": "choice",
+		"instructions": KIND_QUESTION_INSTRUCTIONS,
+		"criteria": ELEMENT_KINDS,
+	}
+
+
+def soft_remap_kind(el: PageElement, kind: str, noul: float) -> tuple[str, str | None]:
+	"""If a small model dumps ad slots into nav_chrome, remap for classification only.
+
+	Does not hide anything by itself. Returns (final_kind, remap_reason_or_None).
+	"""
+	model_kind = kind if kind in ELEMENT_KINDS else "other"
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	looks_ad_label = bool(re.match(r"^advertisements?$", text, re.I))
+	looks_ad_discover = discover in AD_DISCOVERS
+	looks_ad_host = _matches_ad_host(el)
+	if model_kind in {"nav_chrome", "main_content", "other"} and (
+		looks_ad_label or looks_ad_discover or looks_ad_host
+	):
+		if discover in {"ad_host_script", "external_script"} and not looks_ad_label and not text:
+			return "tracking_chrome", "soft_remap_tracker"
+		return "ad", "soft_remap_ad_signals"
+	if model_kind == "nav_chrome" and noul >= 0.85 and (looks_ad_label or looks_ad_host):
+		return "ad", "soft_remap_high_noul_ad"
+	return model_kind, None
+
+
+def element_classify_priority(el: PageElement) -> int:
+	"""Higher score = ask System One sooner (visible ad-like candidates first)."""
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	score = 0
+	if re.match(r"^advertisements?$", text, re.I):
+		score += 100
+	if (el.nearbyLabel or "").strip().lower() in {"advertisement", "advertisements"}:
+		score += 90
+	if discover in AD_DISCOVERS:
+		score += 80
+	if _matches_ad_host(el):
+		score += 70
+	if el.fixedOrSticky:
+		score += 25
+	if discover in {"external_href", "iframe", "external_asset", "external_script"}:
+		score += 15
+	if el.role and "advert" in (el.role or "").lower():
+		score += 60
+	return score
+
+
+def judgment_without_jev(
+	el: PageElement, site_type: str, hide_min: float, reason: str
+) -> ElementJudgment:
+	"""Budget/skip path: still soft-remap ad signals so HTTP response is honest."""
+	kind, remap = soft_remap_kind(el, "other", 0.0)
+	base_reason = reason
+	noul, reason = apply_element_priors(el, 0.0, site_type, reason)
+	if kind == "ad" and noul < PRIOR_FLOOR and base_reason.endswith("_skipped"):
+		# Ad-like nodes skipped for time still get a reviewable floor, not hide-cheat.
+		noul = max(noul, REVIEW_MIN)
+	parts = [reason]
+	if base_reason not in reason:
+		parts.insert(0, base_reason)
+	if remap:
+		parts.append(remap)
+	action = action_for_noul(noul, hide_min)
+	return ElementJudgment(
+		id=el.id,
+		noul=round(noul, 4),
+		action=action,
+		reason="+".join(dict.fromkeys(parts)),
+		kind=kind,
+		kindModel="other",
+	)
+
 
 class PageInfo(BaseModel):
 	url: str = ""
@@ -513,6 +894,8 @@ class PageElement(BaseModel):
 	testId: str | None = None
 	rect: dict[str, float] | None = None
 	fixedOrSticky: bool = False
+	discover: str | None = None
+	nearbyLabel: str | None = None
 
 
 class PageJudgeRequest(BaseModel):
@@ -529,6 +912,8 @@ class ElementJudgment(BaseModel):
 	noul: float
 	action: Literal["hide", "review", "allow"]
 	reason: str = "s1_ad_or_unrelated"
+	kind: str = "other"
+	kindModel: str | None = None
 
 
 class PageJudgeResponse(BaseModel):
@@ -538,6 +923,8 @@ class PageJudgeResponse(BaseModel):
 	site_type_probabilities: dict[str, float]
 	elements: list[ElementJudgment]
 	ms: int
+	hideMin: float = 0.75
+	reviewMin: float = REVIEW_MIN
 	jev_model: str | None = None
 	truncated: bool = False
 
@@ -573,44 +960,24 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		"headings": (req.page.headings or [])[:5],
 	}
 
-	def _el_blob(el: PageElement) -> dict[str, Any]:
-		src = el.src or ""
-		hint = None
-		if "mail-us" in src:
-			hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
-		elif src and AD_HOST_RE.search(src):
-			hint = "src host matches a known ad/tracking network."
-		return {
-			"tag": el.tag,
-			"id": el.idAttr,
-			"classes": el.classes[:8],
-			"role": el.role,
-			"ariaLabel": ((el.ariaLabel or "")[:80] or None),
-			"text": (el.text or "")[:100],
-			"href": ((el.href or "")[:160] or None),
-			"src": ((el.src or "")[:200] or None),
-			"testId": el.testId,
-			"rect": el.rect,
-			"fixedOrSticky": el.fixedOrSticky,
-			"hint": hint,
-		}
-
-	def _jev(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
+	def _jev(state: dict[str, Any], questions: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
 		r = httpx.post(
 			f"{JEV_URL}/v1/systemone",
 			json={"state": state, "model": req.model, "questions": questions},
-			timeout=180.0,
+			timeout=timeout if timeout is not None else PAGE_JUDGE_ELEMENT_TIMEOUT_S,
 		)
 		if r.status_code >= 400:
 			raise RuntimeError(f"jev-local {r.status_code}: {r.text[:500]}")
 		return r.json()
 
 	t0 = time.perf_counter()
+	deadline = t0 + PAGE_JUDGE_BUDGET_S
 
 	site_type = "other"
 	site_probs: dict[str, float] = {}
 	site_conf = 0.0
 	try:
+		site_timeout = min(PAGE_JUDGE_ELEMENT_TIMEOUT_S, max(15.0, deadline - time.perf_counter()))
 		payload1 = _jev(
 			{"task": "Classify the primary type of this web page from state.page.", "page": page_short},
 			{
@@ -623,6 +990,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 					"criteria": SITE_TYPES,
 				}
 			},
+			timeout=site_timeout,
 		)
 		site = (payload1.get("answers") or {}).get("site_type") or {}
 		site_type = str(site.get("choice") or "other")
@@ -647,6 +1015,20 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			site_type = "mail"
 			site_conf = max(site_conf, 0.9)
 
+	biased = extreme_test_site_bias(host, req.page.url or "", site_type, site_probs, site_conf)
+	if biased is not None:
+		biased_type, biased_conf = biased
+		log_event(
+			"page_judge_site_type_override",
+			requestId=request_id,
+			from_type=site_type,
+			to_type=biased_type,
+			host=host,
+			reason="extreme_test_path",
+		)
+		site_type = biased_type
+		site_conf = biased_conf
+
 	log_event(
 		"page_judge_site_type",
 		requestId=request_id,
@@ -654,79 +1036,150 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		site_conf=site_conf,
 	)
 
+	# Score visible ad-like candidates first so a budget cut still remaps ads.
+	elements = sorted(elements, key=element_classify_priority, reverse=True)
+	log_event(
+		"page_judge_order",
+		requestId=request_id,
+		order=[el.id for el in elements],
+		priorities=[element_classify_priority(el) for el in elements],
+	)
+
 	judgments: list[ElementJudgment] = []
 	hide_min = float(req.hideMin)
 	jev_model = None
 	skipped = 0
+	budget_hits = 0
 
 	for el in elements:
-		noul = 0.0
-		reason = "s1_ad_or_unrelated"
-		try:
-			payload = _jev(
-				{
-					"task": (
-						"Score whether this DOM element is an ad or unrelated chrome "
-						"versus necessary UI/content for the known site type."
-					),
-					"page": page_short,
-					"site_type": site_type,
-					"element": _el_blob(el),
-				},
-				{
-					el.id: {
-						"type": "noul",
-						"instructions": (
-							f"This page was classified as site type `{site_type}`. "
-							f"Look at state.element. "
-							f"Is this element an advertisement, sponsored/promo unit, or otherwise "
-							f"unrelated to a `{site_type}` page's primary purpose "
-							f"(ad rail, tracking iframe, junk chrome)?"
-						),
-						"criteria": {
-							"true": "Ad, sponsor, promo, tracking iframe, or unrelated chrome",
-							"false": f"Primary content or necessary UI for a {site_type} page",
-						},
-					}
-				},
-			)
-			jev_model = payload.get("model") or jev_model
-			ans = (payload.get("answers") or {}).get(el.id) or {}
-			noul = float(ans.get("noul", 0.0))
-		except Exception as e:
-			msg = str(e)
-			skipped += 1
-			if "prefix too long" in msg or "input too long" in msg:
-				reason = "prefix_too_long_skipped"
-			else:
-				reason = "s1_error_skipped"
+		remaining = deadline - time.perf_counter()
+		if remaining <= 2.0:
+			budget_hits += 1
+			row = judgment_without_jev(el, site_type, hide_min, "s1_budget_skipped")
+			judgments.append(row)
 			log_event(
-				"page_judge_element_skipped",
+				"page_judge_element",
 				requestId=request_id,
 				elementId=el.id,
-				error=msg[:240],
-				reason=reason,
+				noul=row.noul,
+				action=row.action,
+				reason=row.reason,
+				kind=row.kind,
+				kindModel=row.kindModel,
+				tag=el.tag,
+				src=(el.src or "")[:100],
+				discover=el.discover,
+				budget=True,
 			)
-			noul = 0.0
+			continue
 
-		src = el.src or ""
-		if reason not in ("prefix_too_long_skipped", "s1_error_skipped"):
-			if site_type == "mail" and "mail-us" in src and noul < 0.85:
-				noul = max(noul, 0.9)
-				reason = "s1_plus_mail_us_prior"
-			elif src and AD_HOST_RE.search(src) and noul < 0.85:
-				noul = max(noul, 0.9)
-				reason = "s1_plus_adhost_prior"
-
-		if noul >= hide_min:
-			action: Literal["hide", "review", "allow"] = "hide"
-		elif noul >= 0.45:
-			action = "review"
+		noul = 0.0
+		reason = "s1_ad_or_unrelated"
+		kind = "other"
+		kind_model: str | None = None
+		aria = aria_ad_judgment(el)
+		# Extreme blank/ad_label short-circuits that skip JEV are retired for the
+		# product path. JEV scores them; labeled priors may still raise a floor.
+		if aria is not None:
+			noul, reason = aria
+			kind = "ad"
+			kind_model = "ad"
 		else:
-			action = "allow"
+			try:
+				el_blob = build_element_blob(el)
+				payload = _jev(
+					{
+						"task": (
+							"For this page (state.page, state.site_type), score whether state.element "
+							"is an ad/unrelated chrome, then classify the element kind. "
+							"Classify the element itself — Advertisement labels and ad.com links are ads, "
+							"not navigation."
+						),
+						"page": page_short,
+						"site_type": site_type,
+						"element": el_blob,
+					},
+					{
+						el.id: {
+							"type": "noul",
+							"instructions": (
+								f"This page was classified as site type `{site_type}`. "
+								f"Look at state.element (text, nearbyLabel, href, src, hrefHost, srcHost, "
+								f"discover, hint, role, rect). "
+								f"Is THIS element an advertisement, sponsored/promo unit, or otherwise "
+								f"unrelated to a `{site_type}` page's primary purpose "
+								f"(ad rail, tracking iframe, junk chrome)?"
+							),
+							"criteria": {
+								"true": "Ad, sponsor, promo, tracking iframe, or unrelated chrome",
+								"false": f"Primary content or necessary UI for a {site_type} page",
+							},
+						},
+						f"{el.id}__kind": build_kind_question(el.id),
+					},
+					timeout=min(PAGE_JUDGE_ELEMENT_TIMEOUT_S, max(10.0, remaining - 1.0)),
+				)
+				jev_model = payload.get("model") or jev_model
+				answers = payload.get("answers") or {}
+				ans = answers.get(el.id) or {}
+				noul = float(ans.get("noul", 0.0))
+				kind_ans = answers.get(f"{el.id}__kind") or {}
+				kind_model = str(kind_ans.get("choice") or "other")
+				if kind_model not in ELEMENT_KINDS:
+					kind_model = "other"
+				kind, remap = soft_remap_kind(el, kind_model, noul)
+				if remap:
+					log_event(
+						"page_judge_kind_remap",
+						requestId=request_id,
+						elementId=el.id,
+						kindModel=kind_model,
+						kind=kind,
+						remap=remap,
+						discover=el.discover,
+						noul=round(noul, 4),
+					)
+			except Exception as e:
+				msg = str(e)
+				skipped += 1
+				if "prefix too long" in msg or "input too long" in msg:
+					reason = "prefix_too_long_skipped"
+				else:
+					reason = "s1_error_skipped"
+				log_event(
+					"page_judge_element_skipped",
+					requestId=request_id,
+					elementId=el.id,
+					error=msg[:240],
+					reason=reason,
+				)
+				# Still soft-remap so Advertisement/ad.com are not left as other.
+				kind, remap = soft_remap_kind(el, "other", 0.0)
+				kind_model = "other"
+				noul = 0.0
+				if remap:
+					reason = f"{reason}+{remap}"
+
+		noul, reason = apply_element_priors(el, noul, site_type, reason)
+		if reason == "aria_ad" and kind == "other":
+			kind = "ad"
+			kind_model = kind_model or "other"
+		if kind == "other":
+			kind, remap = soft_remap_kind(el, kind, noul)
+			if remap:
+				kind_model = kind_model or "other"
+
+		action = action_for_noul(noul, hide_min)
 
 		judgments.append(
-			ElementJudgment(id=el.id, noul=round(noul, 4), action=action, reason=reason)
+			ElementJudgment(
+				id=el.id,
+				noul=round(noul, 4),
+				action=action,
+				reason=reason,
+				kind=kind,
+				kindModel=kind_model,
+			)
 		)
 		log_event(
 			"page_judge_element",
@@ -735,8 +1188,11 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			noul=round(noul, 4),
 			action=action,
 			reason=reason,
+			kind=kind,
+			kindModel=kind_model,
 			tag=el.tag,
 			src=(el.src or "")[:100],
+			discover=el.discover,
 		)
 
 	ms = int((time.perf_counter() - t0) * 1000)
@@ -751,6 +1207,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		reviews=sum(1 for j in judgments if j.action == "review"),
 		allows=sum(1 for j in judgments if j.action == "allow"),
 		skipped=skipped,
+		budget_hits=budget_hits,
 	)
 
 	return PageJudgeResponse(
@@ -760,6 +1217,8 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		site_type_probabilities=site_probs,
 		elements=judgments,
 		ms=ms,
+		hideMin=hide_min,
+		reviewMin=REVIEW_MIN,
 		jev_model=jev_model,
 		truncated=truncated,
 	)

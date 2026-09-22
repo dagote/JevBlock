@@ -1,0 +1,41 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { decideHide, normalizeRanks, DEFAULT_RANKS, ELEMENT_KINDS } = require('./ranks.js');
+
+test('ranks: defaults hide ad/promo and leave donate_ask off', () => {
+  const ranks = normalizeRanks(null);
+  assert.equal(ranks.ad.enabled, true);
+  assert.equal(ranks.promo.enabled, true);
+  assert.equal(ranks.donate_ask.enabled, false);
+  assert.equal(ranks.unrelated_inject.enabled, false);
+  assert.equal(ELEMENT_KINDS.includes('ad'), true);
+});
+
+test('ranks: decideHide uses class threshold and enabled flag', () => {
+  const settings = {
+    hideMin: 0.75,
+    ranks: normalizeRanks({
+      ad: { enabled: true, hideMin: 0.75 },
+      donate_ask: { enabled: false, hideMin: 0.5 },
+      unrelated_inject: { enabled: true, hideMin: 0.9 },
+    }),
+  };
+  assert.equal(decideHide(settings, { kind: 'ad', noul: 0.8 }).hide, true);
+  assert.equal(decideHide(settings, { kind: 'ad', noul: 0.8 }).reason, 'rank_ad');
+  assert.equal(decideHide(settings, { kind: 'ad', noul: 0.5 }).hide, false);
+  assert.equal(decideHide(settings, { kind: 'donate_ask', noul: 0.99 }).hide, false);
+  assert.equal(decideHide(settings, { kind: 'unrelated_inject', noul: 0.8 }).hide, false);
+  assert.equal(decideHide(settings, { kind: 'unrelated_inject', noul: 0.95 }).hide, true);
+  assert.equal(decideHide(settings, { kind: 'unrelated_inject', noul: 0.95 }).reason, 'rank_unrelated_inject');
+});
+
+test('ranks: enabling donate_ask changes hide behavior', () => {
+  const off = { hideMin: 0.75, ranks: normalizeRanks(DEFAULT_RANKS) };
+  const on = {
+    hideMin: 0.75,
+    ranks: normalizeRanks({ ...DEFAULT_RANKS, donate_ask: { enabled: true, hideMin: 0.7 } }),
+  };
+  const judgment = { kind: 'donate_ask', noul: 0.8, reason: 's1_ad_or_unrelated' };
+  assert.equal(decideHide(off, judgment).hide, false);
+  assert.equal(decideHide(on, judgment).hide, true);
+});

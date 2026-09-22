@@ -9,11 +9,14 @@ __pycache__/
 # logs & caches
 logs/
 *.jsonl
+!fixtures/*.jsonl
 *.log
 
 # built extension packages (rebuild from extension/)
 *.zip
 adgate-*.zip
+
+node_modules/
 
 # editor / OS
 .DS_Store

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Adgate review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101018;
+      --card: #181824;
+      --line: #2c2c3a;
+      --text: #ececf4;
+      --muted: #9a9ab0;
+      --hide: #c4b5fd;
+      --review: #fbbf24;
+      --allow: #94a3b8;
+      --removed: #86efac;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header, main { width: min(980px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    .sub, .meta { color: var(--muted); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+    button, .file-btn {
+      border: 1px solid var(--line);
+      background: #242433;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.primary { background: #5b4dc7; border-color: #5b4dc7; }
+    .file-btn input { display: none; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 18px; }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+    }
+    .filters { display: flex; gap: 6px; margin-bottom: 14px; }
+    .filters button[aria-pressed="true"] { background: #34344a; color: white; }
+    .card {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 720px) {
+      .card { grid-template-columns: 1fr; }
+    }
+    .kicker { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .score { font-size: 28px; font-weight: 700; }
+    .hide { color: var(--hide); }
+    .review { color: var(--review); }
+    .allow { color: var(--allow); }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #242433;
+    }
+    .badge.removed { color: var(--removed); }
+    .badge.kept { color: var(--muted); }
+    .bar { height: 6px; border-radius: 99px; background: #2a2a38; margin: 8px 0 12px; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: currentColor; }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #101018;
+      border-radius: 8px;
+      padding: 8px;
+      margin: 8px 0 0;
+      color: #c8c8d8;
+      font: 12px/1.4 ui-monospace, monospace;
+      max-height: 180px;
+      overflow: auto;
+    }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    .empty { color: var(--muted); padding: 24px 0 48px; }
+    #status { min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Adgate review</h1>
+    <div class="sub" id="lede">Candidate count, why each node was found, scores, and empty-parent cascade. No on-page chips.</div>
+    <div class="toolbar">
+      <button id="latest" type="button" class="primary">Latest run</button>
+      <label class="file-btn">Load JSON<input id="file" type="file" accept="application/json,.json,.jsonl" /></label>
+      <button id="export-json" type="button">Export JSON</button>
+      <button id="export-jsonl" type="button">Export JSONL</button>
+    </div>
+    <label class="sub">Recent <select id="history"></select></label>
+    <div id="status" class="meta"></div>
+  </header>
+  <main>
+    <div id="summary"></div>
+    <div class="filters" id="filters" hidden>
+      <button type="button" data-filter="removed" aria-pressed="true">Removed</button>
+      <button type="button" data-filter="review" aria-pressed="false">Review band</button>
+      <button type="button" data-filter="allow" aria-pressed="false">Allowed</button>
+      <button type="button" data-filter="all" aria-pressed="false">All</button>
+    </div>
+    <div id="list"></div>
+  </main>
+  <script src="decision-log.js"></script>
+  <script src="review.js"></script>
+</body>
+</html>

@@ -1,41 +1,71 @@
-# Adgate 0.0.0 — System One page judge
+# Adgate 0.1.4 — System One page classify + user ranks
 
 ## Idea
 
-Feed **page context** (not just one node) into System One, then ask:
+Feed **page context** and candidate elements into System One, then let the user decide what to hide by **class** and **score**.
 
 1. **What kind of site is this?** (`choice` → `site_type`)
-2. **For each candidate element:** P(it is an **ad or unrelated** to that site’s purpose) (`noul`)
+2. **For each candidate:**
+   - `noul` — P(ad or unrelated to that site’s purpose)
+   - `kind` — one of `main_content | ad | promo | unrelated_inject | donate_ask | tracking_chrome | nav_chrome | other`
+
+Block removals come from **JEV + user ranks**, not Extreme-specific `force_hide_*` selectors (those are opt-in cheats).
 
 ## Pipeline
 
 ```
-page excerpt + headings + url
+page { url, hostname, title, excerpt, headings }
         +
-candidate elements (iframes, rails, ad-ish nodes)
+elements { id, tag, role, text, nearbyLabel, href, src, hrefHost, srcHost, discover, hint, … }
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
+  client: 15‑min timeout, single-flight (abort overlapping judges)
+  server: ad-like candidates first; noul+kind per element; 12‑min budget
         │
-        ├─ Step 1: site_type choice
-        └─ Step 2: per-element noul (with site_type in state)
+        ├─ site_type choice
+        └─ per element: noul + kind choice (clear ad vs nav_chrome instructions)
         │
         ▼
-hide if P ≥ hideMin (default 0.75)
-popup shows site type + table of P / action
+optional soft_remap_kind (classification only): if model dumps ad slots into nav_chrome
+        but Advertisement / ad discover / ad host signals are present → kind=ad
+        (kindModel keeps the raw model choice; does not force-hide)
+        Budget skips still soft-remap so the HTTP response is complete.
+        │
+        ▼
+client ranks: hide if kind enabled and noul ≥ that class hideMin
+        ▼
+block on → remove hide nodes, then empty parent shells
+decision log for review mode
 ```
 
-## Honest limits (local jev-local 1.5B)
+## Element kinds (`kind`)
 
-The open-weight stand-in often mis-labels mail as `docs_app` and under-scores AOL `mail-us` iframes.  
-Server applies **transparent priors** (logged in `reason`):
+| kind | Meaning |
+|------|---------|
+| `main_content` | Primary article/tool content the user came for |
+| `ad` | Commercial advertisement / sponsored creative / ad slot |
+| `promo` | First-party upsell |
+| `unrelated_inject` | Third-party inject unrelated to purpose |
+| `donate_ask` | Donation / tip ask |
+| `tracking_chrome` | Tracker/beacon/ad script with little UI |
+| `nav_chrome` | Site header/footer/menu only — not Advertisement widgets |
+| `other` | Unclear |
 
-- hostname `mail.aol.com` / `mail.yahoo.com` → force `site_type=mail` when model misses
-- `mail-us` iframe on a mail site / known ad-host src → floor P at 0.9 if S1 is low
+## User ranks (popup)
 
-Real hosted Jev should make those priors unnecessary; keep them labeled so we can turn them off.
+Defaults: hide **ad**, **promo**, and **tracking_chrome** at noul ≥ 0.75. **unrelated_inject** and **donate_ask** are off (enable + set threshold to use). Persist in `chrome.storage.sync.ranks`.
 
-## Install
+Decision reason when a rank fires: `rank_<kind>` (shown in the review UI).
 
-`http://192.168.0.119:8080/adgate-extension/adgate-v0.0.0.zip`  
-Chrome card must show **Adgate / 0.0.0**. Remove all older Adgate builds first.
+## Extreme force-hide cheats (legacy)
+
+`forceHideCheats` defaults **false**. When on, Block also runs Extreme-specific removers (`force_hide_ad_host_widget`, `force_hide_clb_container`, …). That path is for debugging Extreme markup only — not the product.
+
+## Transparent priors (server)
+
+Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host `src`/`href`). Extreme Elementor blank/ad_label short-circuits that **skipped** JEV are retired; those nodes are scored by JEV.
+
+## Versions
+
+Extension **0.1.4**. Server **0.3.2**. The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off.
