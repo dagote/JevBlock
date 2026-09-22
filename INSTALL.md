@@ -1,6 +1,6 @@
 # Install notes
 
-The unpacked extension version in this repo is `extension/manifest.json` (currently **0.1.1**). The 0.3.3 notes below describe an older Chrome-vs-disk mismatch; they are not the current package version. Server **0.3.0** is the matching adgate build. Reload the unpacked extension before a live retest. Extreme force-hide cheats default **off**.
+The unpacked extension version in this repo is `extension/manifest.json` (currently **0.1.2**). The 0.3.3 notes below describe an older Chrome-vs-disk mismatch; they are not the current package version. Server **0.3.1** is the matching adgate build (clearer kind criteria + soft remap of collapsed nav_chrome). Reload the unpacked extension before a live retest. Extreme force-hide cheats default **off**.
 
 # Why you still see 0.1.0
 

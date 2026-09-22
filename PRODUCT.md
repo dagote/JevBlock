@@ -1,4 +1,4 @@
-# Adgate 0.1.0 — System One page classify + user ranks
+# Adgate 0.1.2 — System One page classify + user ranks
 
 ## Idea
 
@@ -16,13 +16,18 @@ Block removals come from **JEV + user ranks**, not Extreme-specific `force_hide_
 ```
 page { url, hostname, title, excerpt, headings }
         +
-elements { id, tag, role, text, nearbyLabel, href, src, classes, rect, fixedOrSticky, ariaLabel, discover }
+elements { id, tag, role, text, nearbyLabel, href, src, hrefHost, srcHost, discover, hint, … }
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
         │
         ├─ site_type choice
-        └─ per element: noul + kind choice
+        └─ per element: noul + kind choice (clear ad vs nav_chrome instructions)
+        │
+        ▼
+optional soft_remap_kind (classification only): if model dumps ad slots into nav_chrome
+        but Advertisement / ad discover / ad host signals are present → kind=ad
+        (kindModel keeps the raw model choice; does not force-hide)
         │
         ▼
 client ranks: hide if kind enabled and noul ≥ that class hideMin
@@ -35,13 +40,13 @@ decision log for review mode
 
 | kind | Meaning |
 |------|---------|
-| `main_content` | Primary content the user came for |
-| `ad` | Advertisement / sponsored unit |
-| `promo` | First-party promo / upsell |
+| `main_content` | Primary article/tool content the user came for |
+| `ad` | Commercial advertisement / sponsored creative / ad slot |
+| `promo` | First-party upsell |
 | `unrelated_inject` | Third-party inject unrelated to purpose |
 | `donate_ask` | Donation / tip ask |
-| `tracking_chrome` | Tracking / beacon chrome |
-| `nav_chrome` | Primary navigation the user needs |
+| `tracking_chrome` | Tracker/beacon/ad script with little UI |
+| `nav_chrome` | Site header/footer/menu only — not Advertisement widgets |
 | `other` | Unclear |
 
 ## User ranks (popup)
@@ -60,4 +65,4 @@ Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host 
 
 ## Versions
 
-Extension **0.1.1**. Server **0.3.0**. Empty-parent collapse and optional DNR remain as plumbing. Candidate discovery feeds JEV even when force-hide cheats are off; a judge timeout still records collected candidates (`reason: judge_error`).
+Extension **0.1.2**. Server **0.3.1**. Kind choice instructions distinguish ad vs nav_chrome; element blobs include discover/hosts/hints. Soft remap is classification-only (logs `kindModel`). Candidate discovery feeds JEV even when force-hide cheats are off; a judge timeout still records collected candidates (`reason: judge_error`).

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.1.1",
-  "description": "0.1.1 — classify candidates without Extreme force-hide cheats",
+  "version": "0.1.2",
+  "description": "0.1.2 — JEV kind classify (ad vs nav_chrome) + user ranks; Extreme cheats off",
   "permissions": [
     "storage",
     "activeTab",

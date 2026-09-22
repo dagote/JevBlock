@@ -36,11 +36,95 @@ class DecisionLogTests(unittest.TestCase):
 	def test_element_kinds_and_judgment_kind_field(self) -> None:
 		self.assertIn("ad", app.ELEMENT_KINDS)
 		self.assertIn("donate_ask", app.ELEMENT_KINDS)
-		row = app.ElementJudgment(id="e0", noul=0.9, action="hide", reason="s1_ad_or_unrelated", kind="ad")
+		self.assertIn("nav_chrome", app.ELEMENT_KINDS)
+		self.assertIn("tracking_chrome", app.ELEMENT_KINDS)
+		row = app.ElementJudgment(
+			id="e0", noul=0.9, action="hide", reason="s1_ad_or_unrelated", kind="ad", kindModel="nav_chrome"
+		)
 		self.assertEqual(row.kind, "ad")
+		self.assertEqual(row.kindModel, "nav_chrome")
 		plain = app.ElementJudgment(id="e1", noul=0.1, action="allow")
 		self.assertEqual(plain.kind, "other")
-		self.assertEqual(app.SERVER_VERSION, "0.3.0")
+		self.assertEqual(app.SERVER_VERSION, "0.3.1")
+
+	def test_kind_question_payload_has_clear_option_instructions(self) -> None:
+		"""Hermetic: kind choice sent to System One includes improved criteria + instructions."""
+		q = app.build_kind_question("e0")
+		self.assertEqual(q["type"], "choice")
+		self.assertEqual(q["criteria"], app.ELEMENT_KINDS)
+		instr = q["instructions"]
+		self.assertIn("Advertisement", instr)
+		self.assertIn("nav_chrome ONLY", instr)
+		self.assertIn("discover", instr)
+		self.assertIn("hrefHost", instr)
+		self.assertIn("site_type", instr)
+		self.assertIn("Do NOT use for Advertisement", app.ELEMENT_KINDS["nav_chrome"])
+		self.assertIn("Commercial advertisement", app.ELEMENT_KINDS["ad"])
+		self.assertIn("First-party upsell", app.ELEMENT_KINDS["promo"])
+		self.assertIn("Tracker, beacon", app.ELEMENT_KINDS["tracking_chrome"])
+		self.assertIn("Primary article", app.ELEMENT_KINDS["main_content"])
+
+	def test_element_blob_includes_discover_hosts_and_ad_hints(self) -> None:
+		label = app.PageElement(
+			id="w1",
+			tag="div",
+			text="Advertisement",
+			discover="ad_label",
+			href="https://ad.com/click",
+			src="//cdn.bncloudfl.com/bn/creative.gif",
+			nearbyLabel="Advertisement",
+		)
+		blob = app.build_element_blob(label)
+		self.assertEqual(blob["discover"], "ad_label")
+		self.assertEqual(blob["hrefHost"], "ad.com")
+		self.assertEqual(blob["srcHost"], "cdn.bncloudfl.com")
+		self.assertEqual(blob["text"], "Advertisement")
+		self.assertEqual(blob["nearbyLabel"], "Advertisement")
+		self.assertIsNotNone(blob["hint"])
+		self.assertIn("ad", (blob["hint"] or "").lower())
+
+		vast = app.PageElement(
+			id="v1",
+			tag="div",
+			discover="vast_player",
+			text="",
+		)
+		vast_blob = app.build_element_blob(vast)
+		self.assertEqual(vast_blob["discover"], "vast_player")
+		self.assertIn("vast_player", vast_blob["hint"] or "")
+
+	def test_soft_remap_kind_fixes_nav_chrome_collapse_without_hiding(self) -> None:
+		"""Model says nav_chrome; ad signals remap kind for ranks — not a force-hide."""
+		ad_label = app.PageElement(id="e", tag="div", text="Advertisement", discover="ad_label")
+		kind, reason = app.soft_remap_kind(ad_label, "nav_chrome", 0.95)
+		self.assertEqual(kind, "ad")
+		self.assertEqual(reason, "soft_remap_ad_signals")
+
+		ad_com = app.PageElement(id="e", tag="a", href="https://ad.com/x", discover="ad_host_href", text="Buy")
+		kind, reason = app.soft_remap_kind(ad_com, "nav_chrome", 0.92)
+		self.assertEqual(kind, "ad")
+		self.assertEqual(reason, "soft_remap_ad_signals")
+
+		script = app.PageElement(
+			id="e",
+			tag="script",
+			src="//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+			discover="ad_host_script",
+			text="",
+		)
+		kind, reason = app.soft_remap_kind(script, "other", 0.7)
+		self.assertEqual(kind, "tracking_chrome")
+		self.assertEqual(reason, "soft_remap_tracker")
+
+		real_nav = app.PageElement(id="e", tag="nav", text="Home About Contact", discover="")
+		kind, reason = app.soft_remap_kind(real_nav, "nav_chrome", 0.1)
+		self.assertEqual(kind, "nav_chrome")
+		self.assertIsNone(reason)
+
+		# Already-correct model kind is left alone
+		kind, reason = app.soft_remap_kind(ad_label, "ad", 0.9)
+		self.assertEqual(kind, "ad")
+		self.assertIsNone(reason)
 
 	def test_review_band(self) -> None:
 		self.assertEqual(app.action_for_noul(0.75, 0.75), "hide")

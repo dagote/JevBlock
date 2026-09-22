@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.1 — JEV classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.2 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -18,7 +18,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.1';
+const CLIENT = 'extension-0.1.2';
 
 let suppressMutations = false;
 
@@ -938,7 +938,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.1-classify',
+    mode: '0.1.2-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,

@@ -21,7 +21,7 @@ JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
 SERVER_DIR = Path(__file__).resolve().parent
 REVIEW_MIN = 0.45
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.3.1"
 
 
 def resolve_path(env_value: str | None, default: Path) -> Path:
@@ -694,15 +694,133 @@ SITE_TYPES = {
 }
 
 ELEMENT_KINDS = {
-	"main_content": "Primary page content the user came for",
-	"ad": "Advertisement or sponsored unit",
-	"promo": "First-party promo / upsell / special offer chrome",
-	"unrelated_inject": "Third-party inject unrelated to the page purpose",
-	"donate_ask": "Donation / tip / support ask",
-	"tracking_chrome": "Tracking, beacon, or measurement chrome",
-	"nav_chrome": "Primary navigation or site chrome the user needs",
-	"other": "None of the above / unclear",
+	"main_content": (
+		"Primary article, tool, form, or media the user opened the page for. "
+		"NOT ad slots, NOT 'Advertisement' labels, NOT third-party creatives."
+	),
+	"ad": (
+		"Commercial advertisement, sponsored creative, or ad slot: "
+		"text exactly/near 'Advertisement', ad.com / ad-network href or src, "
+		"banner/iframe creative, VAST/pre-roll ad tag, GPT/AdSense unit. "
+		"Use this even when the rest of the page is a test or marketing site."
+	),
+	"promo": (
+		"First-party upsell or special offer from the same site (newsletter, upgrade). "
+		"Not a third-party ad network creative."
+	),
+	"unrelated_inject": (
+		"Third-party inject unrelated to the page purpose (widgets, surveys) that is not a clear ad."
+	),
+	"donate_ask": "Donation, tip jar, or support/paywall ask.",
+	"tracking_chrome": (
+		"Tracker, beacon, or ad-loader script/pixel with little or no visible UI "
+		"(head scripts, 1x1 pixels). Prefer ad when there is a visible Advertisement label or creative."
+	),
+	"nav_chrome": (
+		"Site navigation only: header/footer/menu/logo/skip-link. "
+		"Do NOT use for Advertisement-labeled widgets, ad.com links, VAST players, or ad iframes."
+	),
+	"other": "None of the above / unclear after reading text, href, src, and discover.",
 }
+
+AD_DISCOVERS = {
+	"ad_host_script",
+	"ad_host_href",
+	"ad_host_asset",
+	"ad_label",
+	"vast_player",
+	"blank_html_widget",
+	"role_advertisement",
+	"iab_slot",
+	"clb_slot",
+	"adsense",
+	"gpt_slot",
+}
+
+KIND_QUESTION_INSTRUCTIONS = (
+	"Classify THIS element (state.element), not the whole page. "
+	"Read text, nearbyLabel, href, src, srcHost, hrefHost, discover, and hint. "
+	"If text is 'Advertisement' or discover/href/src looks like an ad slot or ad network, choose ad. "
+	"Choose nav_chrome ONLY for real site menus/headers/footers. "
+	"Do not dump unknown or ad-like nodes into nav_chrome. "
+	"site_type describes the page; it does not make every element navigation."
+)
+
+
+def _host_of(url: str | None) -> str | None:
+	if not url:
+		return None
+	match = re.search(r"^(?:https?:)?//([^/?#]+)", url, re.I)
+	if match:
+		return match.group(1).lower()
+	if re.match(r"^(?:https?://)?ad\.com/?$", url.strip(), re.I):
+		return "ad.com"
+	return None
+
+
+def build_element_blob(el: PageElement) -> dict[str, Any]:
+	"""Compact element state for System One. Includes discover and host hints."""
+	src = el.src or ""
+	href = el.href or ""
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	hint = None
+	if "mail-us" in src:
+		hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
+	elif _matches_ad_host(el):
+		hint = "src or href matches a known ad/tracking network — prefer kind=ad or tracking_chrome."
+	elif discover in AD_DISCOVERS:
+		hint = f"Client discover={discover} marks a likely ad/slot candidate — prefer kind=ad unless clearly nav."
+	elif re.match(r"^advertisements?$", text, re.I):
+		hint = "Visible text is an Advertisement label — prefer kind=ad."
+	return {
+		"tag": el.tag,
+		"id": el.idAttr,
+		"classes": el.classes[:8],
+		"role": el.role,
+		"ariaLabel": ((el.ariaLabel or "")[:80] or None),
+		"text": text[:100] or None,
+		"nearbyLabel": ((el.nearbyLabel or "")[:80] or None),
+		"href": (href[:160] or None),
+		"src": (src[:200] or None),
+		"hrefHost": _host_of(href),
+		"srcHost": _host_of(src),
+		"testId": el.testId,
+		"rect": el.rect,
+		"fixedOrSticky": el.fixedOrSticky,
+		"discover": discover or None,
+		"hint": hint,
+	}
+
+
+def build_kind_question(element_id: str) -> dict[str, Any]:
+	return {
+		"type": "choice",
+		"instructions": KIND_QUESTION_INSTRUCTIONS,
+		"criteria": ELEMENT_KINDS,
+	}
+
+
+def soft_remap_kind(el: PageElement, kind: str, noul: float) -> tuple[str, str | None]:
+	"""If a small model dumps ad slots into nav_chrome, remap for classification only.
+
+	Does not hide anything by itself. Returns (final_kind, remap_reason_or_None).
+	"""
+	model_kind = kind if kind in ELEMENT_KINDS else "other"
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	looks_ad_label = bool(re.match(r"^advertisements?$", text, re.I))
+	looks_ad_discover = discover in AD_DISCOVERS
+	looks_ad_host = _matches_ad_host(el)
+	if model_kind in {"nav_chrome", "main_content", "other"} and (
+		looks_ad_label or looks_ad_discover or looks_ad_host
+	):
+		if discover in {"ad_host_script", "external_script"} and not looks_ad_label and not text:
+			return "tracking_chrome", "soft_remap_tracker"
+		return "ad", "soft_remap_ad_signals"
+	if model_kind == "nav_chrome" and noul >= 0.85 and (looks_ad_label or looks_ad_host):
+		return "ad", "soft_remap_high_noul_ad"
+	return model_kind, None
 
 
 class PageInfo(BaseModel):
@@ -745,6 +863,7 @@ class ElementJudgment(BaseModel):
 	action: Literal["hide", "review", "allow"]
 	reason: str = "s1_ad_or_unrelated"
 	kind: str = "other"
+	kindModel: str | None = None
 
 
 class PageJudgeResponse(BaseModel):
@@ -790,30 +909,6 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		"excerpt": (req.page.excerpt or "")[:600],
 		"headings": (req.page.headings or [])[:5],
 	}
-
-	def _el_blob(el: PageElement) -> dict[str, Any]:
-		src = el.src or ""
-		hint = None
-		if "mail-us" in src:
-			hint = "AOL/Yahoo /mail-us/ iframe paths are typically right-rail ad units."
-		elif _matches_ad_host(el):
-			hint = "src or href matches a known ad/tracking network."
-		return {
-			"tag": el.tag,
-			"id": el.idAttr,
-			"classes": el.classes[:8],
-			"role": el.role,
-			"ariaLabel": ((el.ariaLabel or "")[:80] or None),
-			"text": (el.text or "")[:100],
-			"href": ((el.href or "")[:160] or None),
-			"src": ((el.src or "")[:200] or None),
-			"testId": el.testId,
-			"rect": el.rect,
-			"fixedOrSticky": el.fixedOrSticky,
-			"discover": el.discover,
-			"nearbyLabel": ((el.nearbyLabel or "")[:80] or None),
-			"hint": hint,
-		}
 
 	def _jev(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
 		r = httpx.post(
@@ -897,31 +992,37 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		noul = 0.0
 		reason = "s1_ad_or_unrelated"
 		kind = "other"
+		kind_model: str | None = None
 		aria = aria_ad_judgment(el)
 		# Extreme blank/ad_label short-circuits that skip JEV are retired for the
 		# product path. JEV scores them; labeled priors may still raise a floor.
 		if aria is not None:
 			noul, reason = aria
 			kind = "ad"
+			kind_model = "ad"
 		else:
 			try:
+				el_blob = build_element_blob(el)
 				payload = _jev(
 					{
 						"task": (
-							"Score whether this DOM element is an ad or unrelated chrome "
-							"versus necessary UI/content for the known site type, and classify it."
+							"For this page (state.page, state.site_type), score whether state.element "
+							"is an ad/unrelated chrome, then classify the element kind. "
+							"Classify the element itself — Advertisement labels and ad.com links are ads, "
+							"not navigation."
 						),
 						"page": page_short,
 						"site_type": site_type,
-						"element": _el_blob(el),
+						"element": el_blob,
 					},
 					{
 						el.id: {
 							"type": "noul",
 							"instructions": (
 								f"This page was classified as site type `{site_type}`. "
-								f"Look at state.element (tag, text, href, src, role, rect, nearbyLabel). "
-								f"Is this element an advertisement, sponsored/promo unit, or otherwise "
+								f"Look at state.element (text, nearbyLabel, href, src, hrefHost, srcHost, "
+								f"discover, hint, role, rect). "
+								f"Is THIS element an advertisement, sponsored/promo unit, or otherwise "
 								f"unrelated to a `{site_type}` page's primary purpose "
 								f"(ad rail, tracking iframe, junk chrome)?"
 							),
@@ -930,15 +1031,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 								"false": f"Primary content or necessary UI for a {site_type} page",
 							},
 						},
-						f"{el.id}__kind": {
-							"type": "choice",
-							"instructions": (
-								"Classify state.element for a product that lets users hide ads, "
-								"promos, unrelated injects, and donate asks by class. "
-								"Use main_content or nav_chrome when the node is needed for the page."
-							),
-							"criteria": ELEMENT_KINDS,
-						},
+						f"{el.id}__kind": build_kind_question(el.id),
 					},
 				)
 				jev_model = payload.get("model") or jev_model
@@ -946,9 +1039,21 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 				ans = answers.get(el.id) or {}
 				noul = float(ans.get("noul", 0.0))
 				kind_ans = answers.get(f"{el.id}__kind") or {}
-				kind = str(kind_ans.get("choice") or "other")
-				if kind not in ELEMENT_KINDS:
-					kind = "other"
+				kind_model = str(kind_ans.get("choice") or "other")
+				if kind_model not in ELEMENT_KINDS:
+					kind_model = "other"
+				kind, remap = soft_remap_kind(el, kind_model, noul)
+				if remap:
+					log_event(
+						"page_judge_kind_remap",
+						requestId=request_id,
+						elementId=el.id,
+						kindModel=kind_model,
+						kind=kind,
+						remap=remap,
+						discover=el.discover,
+						noul=round(noul, 4),
+					)
 			except Exception as e:
 				msg = str(e)
 				skipped += 1
@@ -965,16 +1070,23 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 				)
 				noul = 0.0
 				kind = "other"
+				kind_model = None
 
 		noul, reason = apply_element_priors(el, noul, site_type, reason)
 		if reason == "aria_ad" and kind == "other":
 			kind = "ad"
+			kind_model = kind_model or "other"
 
 		action = action_for_noul(noul, hide_min)
 
 		judgments.append(
 			ElementJudgment(
-				id=el.id, noul=round(noul, 4), action=action, reason=reason, kind=kind
+				id=el.id,
+				noul=round(noul, 4),
+				action=action,
+				reason=reason,
+				kind=kind,
+				kindModel=kind_model,
 			)
 		)
 		log_event(
@@ -985,6 +1097,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			action=action,
 			reason=reason,
 			kind=kind,
+			kindModel=kind_model,
 			tag=el.tag,
 			src=(el.src or "")[:100],
 			discover=el.discover,

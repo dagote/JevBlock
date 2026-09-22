@@ -2,7 +2,7 @@
 
 Chrome extension + intranet service that uses a **System One / Jev-compatible** judge to score page elements as ads (or unrelated chrome) given whole-page context.
 
-Extension version is `extension/manifest.json` (**0.1.1**). Server version is **0.3.0**. Judge collects classify candidates without Extreme force-hide cheats (default off). Block OFF = classify-only decision log.
+Extension version is `extension/manifest.json` (**0.1.2**). Server version is **0.3.1**. Kind choice asks clear ad vs nav_chrome criteria; element state includes discover/hosts. Force-hide cheats stay off. Block OFF = classify-only decision log.
 
 ## How it works
 
@@ -95,9 +95,9 @@ Target: https://canyoublockit.com/extreme-test/
 This page is a stress catalog (pop-unders, interstitials, push prompts, in-page push, banners, ad hosts). It is not a claim that every cell is blocked.
 
 1. Start jev-local and adgate (above). Confirm `GET /health` shows `jev_ok` if the scorer is up.
-2. Load unpacked `extension/` and confirm the card says **0.1.1**. Reload if it still says 0.1.0 or older.
-3. Set the server URL. Confirm `GET /health` reports **0.3.0**. Enable **Block**. Configure hide ranks (ad/promo on by default). Leave Extreme force-hide cheats **off**.
-4. Open a page, reload so 0.1.1 attaches, click **Judge this tab** with Block **off** first. Review should list candidates with kind+noul (or `judge_error` rows if JEV timed out — still non-zero candidates). Then enable Block and ranks to remove.
+2. Load unpacked `extension/` and confirm the card says **0.1.2**. Reload if it still says 0.1.1 or older.
+3. Set the server URL. Confirm `GET /health` reports **0.3.1**. Enable **Block**. Configure hide ranks (ad/promo on by default). Leave Extreme force-hide cheats **off**.
+4. Open a page, reload so 0.1.2 attaches, click **Judge this tab** with Block **off** first. Review should list candidates with kind+noul (Advertisement/ad.com should be `ad`, not `nav_chrome`). Then enable Block and ranks to remove.
 5. Check empty parents in the “After” column (`reason: empty_parent`). The summary line starts with the candidate count. Export JSON/JSONL or reload the latest run from the review page.
 6. Optional **Advanced → Extreme early defenses**, then reload the test tab. That registers `early.js` at `document_start` in the page world (pop-under gate + notification deny + known-host node strip). **Block** also enables `rules.json` through `declarativeNetRequest` for known ad hosts. With Block off, those network rules stay disabled so the judge can still see the requests.
 7. Nodes that early defenses or DNR remove before the judge never appear in the decision log. The log is the DOM judge’s record.
@@ -111,7 +111,7 @@ server/.venv/bin/python -m unittest server.test_decision_log
 
 ## Notes
 
-- Reload **0.1.1** and restart adgate **0.3.0**. Extreme force-hide cheats stay off for product retests. A unit test is not a live Chrome pass.
+- Reload **0.1.2** and restart adgate **0.3.1**. Extreme force-hide cheats stay off for product retests. A unit test is not a live Chrome pass.
 - `node --test extension/*.test.js` includes ranks, cheats-default-off, and legacy Extreme remover tests (debug only). Install linkedom with `npm install` first.  
 - Page context is kept small; elements are scored **one call each**. Oversized prefixes are skipped silently for that element.  
 - Do not commit `logs/` or `*.zip` builds.
