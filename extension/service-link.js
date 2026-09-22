@@ -82,6 +82,47 @@
     return message.split(key).join('[redacted]');
   }
 
+  const JUDGE_ELEMENT_KEYS = [
+    'id',
+    'tag',
+    'role',
+    'text',
+    'nearbyLabel',
+    'href',
+    'src',
+    'hrefHost',
+    'srcHost',
+    'rect',
+    'fixedOrSticky',
+    'discover',
+    'hint',
+  ];
+
+  /** Drop HTML dumps and debug-only fields before POST /v1/page-judge. */
+  function slimJudgeElement(el) {
+    const src = el || {};
+    const out = {
+      id: src.id,
+      tag: src.tag || '',
+      fixedOrSticky: !!src.fixedOrSticky,
+    };
+    if (src.role) out.role = String(src.role).slice(0, 40);
+    if (src.text) out.text = String(src.text).replace(/\s+/g, ' ').trim().slice(0, 180);
+    if (src.nearbyLabel) out.nearbyLabel = String(src.nearbyLabel).replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (src.href) out.href = String(src.href).slice(0, 300);
+    if (src.src) out.src = String(src.src).slice(0, 300);
+    if (src.hrefHost) out.hrefHost = String(src.hrefHost).slice(0, 120);
+    if (src.srcHost) out.srcHost = String(src.srcHost).slice(0, 120);
+    if (src.rect && typeof src.rect === 'object') out.rect = src.rect;
+    if (src.discover) out.discover = String(src.discover).slice(0, 40);
+    if (src.hint) out.hint = String(src.hint).replace(/\s+/g, ' ').trim().slice(0, 140);
+    return out;
+  }
+
+  function slimJudgeElements(elements) {
+    return (elements || []).map(slimJudgeElement);
+  }
+
   function buildPageJudgeRequest(settings, payload) {
     const cfg = settings || {};
     const bodyIn = payload || {};
@@ -92,7 +133,7 @@
       headers: jsonHeaders(cfg.apiKey),
       body: {
         page: bodyIn.page,
-        elements: bodyIn.elements || [],
+        elements: slimJudgeElements(bodyIn.elements),
         hideMin: bodyIn.hideMin ?? cfg.hideMin ?? 0.75,
         sessionId: bodyIn.sessionId,
         client: bodyIn.client,
@@ -244,6 +285,9 @@
     migrateStoredSettings,
     jsonHeaders,
     redactSecret,
+    JUDGE_ELEMENT_KEYS,
+    slimJudgeElement,
+    slimJudgeElements,
     buildPageJudgeRequest,
     buildLogRequest,
     modelListUrls,

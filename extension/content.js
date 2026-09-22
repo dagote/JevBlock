@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.7 — JEV kind classify + user ranks; one neighborhood re-classify after hide.
+ * Adgate 0.1.8 — slim page-judge fields, candidate selector, missing-kind rank policy.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -20,7 +20,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.7';
+const CLIENT = 'extension-0.1.8';
 
 let suppressMutations = false;
 
@@ -673,15 +673,20 @@ async function classifyPicked({
   const elements = picked.map((item, i) =>
     globalThis.AdgateCandidates.serializeCandidate(item, `${idPrefix}${i}`, hooks),
   );
+  const wire = elements.map((row) =>
+    globalThis.AdgateCandidates.toJudgeElement
+      ? globalThis.AdgateCandidates.toJudgeElement(row)
+      : row,
+  );
   const byId = Object.fromEntries(picked.map((item, i) => [`${idPrefix}${i}`, item.el]));
   let res = emptyJudgeResponse(settings);
   let jevError = null;
-  if (elements.length) {
+  if (wire.length) {
     try {
       res = await sendMessage({
         type: 'ADGATE_PAGE_JUDGE',
         page,
-        elements,
+        elements: wire,
         hideMin: Number(settings.hideMin) || 0.75,
       });
       if (res?.error) jevError = new Error(res.error);
@@ -741,7 +746,8 @@ async function classifyPicked({
       blockEnabled &&
       settings.forceHideCheats === true &&
       globalThis.AdgateCandidates?.isForcedHide?.(ser);
-    const ranked = globalThis.AdgateRanks?.decideHide(settings, j) || {
+    const slotPrior = globalThis.AdgateCandidates?.slotPriorName?.(ser) || '';
+    const ranked = globalThis.AdgateRanks?.decideHide(settings, { ...j, slotPrior }) || {
       hide: j.action === 'hide',
       action: j.action,
       reason: j.reason,
@@ -750,7 +756,8 @@ async function classifyPicked({
     const rankWantsHide = ranked.hide === true || ranked.action === 'hide';
     let action = ranked.action || j.action;
     let reason = ranked.reason || j.reason;
-    const kind = ranked.kind || j.kind || 'other';
+    const hostKind = j.kind == null || String(j.kind).trim() === '' ? null : String(j.kind);
+    const kind = ranked.kindLabel || hostKind || ranked.kind || 'other';
     if (cheatForced && action !== 'hide') {
       action = 'hide';
       reason = `client_${ser.discover || 'ad_slot'}`;
@@ -788,6 +795,9 @@ async function classifyPicked({
       discover: ser.discover || '',
       noul: j.noul,
       kind,
+      kindPolicy: ranked.kindPolicy || null,
+      hostKind: ranked.hostKind === null ? null : hostKind,
+      prior: ranked.prior || null,
       action: !blockEnabled && action === 'hide' ? 'review' : action,
       reason,
       removed,
@@ -866,6 +876,17 @@ async function runJudge(trigger) {
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
+  const fingerprint = globalThis.AdgateCandidates?.judgeFingerprint
+    ? globalThis.AdgateCandidates.judgeFingerprint(
+        page,
+        picked.map((item, i) => globalThis.AdgateCandidates.serializeCandidate(item, `e${i}`, layoutHooks())),
+      )
+    : '';
+  if (repeatGuard?.duplicate(fingerprint, Date.now(), trigger) && lastJudgeResult?.ok) {
+    log('info', 'judge_skip_repeat', { trigger });
+    suppressMutations = false;
+    return lastJudgeResult;
+  }
 
   log('info', 'judge_start', {
     trigger,
@@ -987,6 +1008,7 @@ async function runJudge(trigger) {
     suppressMutations = false;
   }, 700);
 
+  if (!jevError && fingerprint) repeatGuard?.commit(fingerprint, Date.now());
   if (jevError) throw jevError;
   return { ok: true, ...run };
 }
@@ -994,6 +1016,9 @@ async function runJudge(trigger) {
 let busy = false;
 let queued = false;
 let lastJudgeResult = null;
+const repeatGuard = globalThis.AdgateCandidates?.createRepeatGuard
+  ? globalThis.AdgateCandidates.createRepeatGuard(globalThis.AdgateCandidates.REPEAT_GUARD_MS)
+  : null;
 
 async function safeJudge(trigger) {
   if (busy) {
@@ -1062,7 +1087,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.7-classify',
+    mode: '0.1.8-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,

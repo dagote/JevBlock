@@ -42,15 +42,73 @@
     return out;
   }
 
+  function hostKindOf(judgment) {
+    if (!judgment || judgment.kind == null) return '';
+    const text = String(judgment.kind).trim().toLowerCase();
+    if (!text || text === 'null' || text === 'undefined') return '';
+    return text;
+  }
+
+  /**
+   * Client prior for a structural mail slot when hosted noul is below the ad bar.
+   * Not an Extreme force-hide cheat, and not a claim that the host scored it high.
+   * Capital One / ad_label text is not a slot prior.
+   */
+  function slotPriorDecision(ranks, globalMin, noul, hostKind, slotPrior) {
+    const slot = String(slotPrior || '');
+    if (slot !== 'mail_gam' && slot !== 'data_ad_row') return null;
+    const ad = ranks.ad;
+    const threshold = Number(ad.hideMin) || globalMin;
+    if (!(noul < threshold) || !ad.enabled) return null;
+    const reason = slot === 'mail_gam' ? 'prior_mail_gam' : 'prior_data_ad_row';
+    return {
+      hide: true,
+      action: 'hide',
+      reason,
+      kind: 'ad',
+      kindPolicy: 'ad',
+      kindLabel: hostKind ? null : 'kind_missing_host',
+      hostKind: hostKind || null,
+      prior: reason,
+    };
+  }
+
   /**
    * Decide whether Block should remove this judgment.
-   * Prefer kind + per-class threshold; fall back to global hideMin on noul when kind missing.
+   * Hosted page-judge often omits kind. Missing kind plus host action hide,
+   * or noul at/above hideMin, is scored with the ad rank only. The review
+   * label is kind_missing_host — the host did not return kind.
+   * judgment.slotPrior (mail_gam | data_ad_row) is a client prior when noul is weak.
    */
   function decideHide(settings, judgment) {
     const ranks = normalizeRanks(settings && settings.ranks);
     const globalMin = Number(settings && settings.hideMin) || 0.75;
     const noul = Number(judgment && judgment.noul) || 0;
-    const kind = String((judgment && judgment.kind) || '').toLowerCase() || 'other';
+    const hostKind = hostKindOf(judgment);
+    const hostAction = String((judgment && judgment.action) || '').toLowerCase();
+    const reviewFloor = Math.min(0.45, globalMin);
+    const prior = slotPriorDecision(ranks, globalMin, noul, hostKind, judgment && judgment.slotPrior);
+    if (prior) return prior;
+
+    if (!hostKind && (hostAction === 'hide' || noul >= globalMin)) {
+      const ad = ranks.ad;
+      const threshold = Number(ad.hideMin) || globalMin;
+      const hide = !!(ad.enabled && noul >= threshold);
+      let action = 'allow';
+      if (hide) action = 'hide';
+      else if (noul >= reviewFloor) action = 'review';
+      return {
+        hide,
+        action,
+        reason: 'kind_missing_host',
+        kind: 'ad',
+        kindPolicy: 'ad',
+        kindLabel: 'kind_missing_host',
+        hostKind: null,
+      };
+    }
+
+    const kind = hostKind || 'other';
     const rank = ranks[kind] || ranks.other;
 
     if (rank.enabled && noul >= (rank.hideMin || globalMin)) {
@@ -59,20 +117,22 @@
         action: 'hide',
         reason: `rank_${kind}`,
         kind,
+        kindPolicy: null,
+        kindLabel: null,
+        hostKind: hostKind || null,
       };
     }
 
-    if (!judgment?.kind && noul >= globalMin) {
+    if (noul >= reviewFloor && noul < globalMin) {
       return {
-        hide: true,
-        action: 'hide',
-        reason: (judgment && judgment.reason) || 'noul_hide',
-        kind: kind || 'other',
+        hide: false,
+        action: 'review',
+        reason: (judgment && judgment.reason) || 'review_band',
+        kind,
+        kindPolicy: null,
+        kindLabel: null,
+        hostKind: hostKind || null,
       };
-    }
-
-    if (noul >= Math.min(0.45, globalMin) && noul < globalMin) {
-      return { hide: false, action: 'review', reason: (judgment && judgment.reason) || 'review_band', kind };
     }
 
     return {
@@ -80,6 +140,9 @@
       action: 'allow',
       reason: (judgment && judgment.reason) || 'allow',
       kind,
+      kindPolicy: null,
+      kindLabel: null,
+      hostKind: hostKind || null,
     };
   }
 

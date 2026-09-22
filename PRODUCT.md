@@ -1,4 +1,4 @@
-# Adgate 0.1.7 — System One page classify + user ranks
+# Adgate 0.1.8 — System One page classify + user ranks
 
 ## Idea
 
@@ -16,7 +16,7 @@ Block removals come from **JEV + user ranks**, not Extreme-specific `force_hide_
 ```
 page { url, hostname, title, excerpt, headings }
         +
-elements { id, tag, role, text, nearbyLabel, href, src, hrefHost, srcHost, discover, hint, … }
+elements { id, tag, role, text, nearbyLabel, href, src, hrefHost, srcHost, rect, fixedOrSticky, discover, hint }
         │
         ▼
 POST /v1/page-judge  (Service URL, Dagote hosted by default → JEV)
@@ -44,6 +44,67 @@ one neighborhood re-classify of sibling/same-wrapper candidates
 decision log for review mode
 ```
 
+## Judge element contract (hosted page-judge)
+
+Hosted `POST /v1/page-judge` scores an element from a short blob. These are the only fields the client sends:
+
+| Field | Role |
+|-------|------|
+| `id` | Match the judgment back to the node |
+| `tag` | Element tag |
+| `role` | ARIA role when set (`presentation` marks a spacer) |
+| `text` | Visible text, capped at 180 characters |
+| `nearbyLabel` | Short previous-sibling or parent label (for example `Advertisement`) |
+| `href` / `src` | Own URL, or the first meaningful child `a[href]` / `iframe[src]` |
+| `hrefHost` / `srcHost` | Host of those URLs when present |
+| `rect` | `{w,h,x,y}` |
+| `fixedOrSticky` | Fixed, sticky, or absolute |
+| `discover` | Why the node was kept: `iframe`, `ad_host_asset`, `data_ad_row`, or an older slot name |
+| `hint` | Optional short phrase (≤140). Facts only, not an HTML dump |
+
+`classes`, `idAttr`, `ariaLabel`, `testId`, `outerHTML`, and `innerText` are debug fields for the review log. They are not posted. Pick Score / the decision log may still show them.
+
+When a wrapper is serialized, the first real child `iframe[src]` is copied onto `src` (and `srcHost`). The first real child `a[href]` is copied onto `href` only if the node has no href of its own. `javascript:`, `about:blank`, and empty URLs are not meaningful.
+
+`discover` is set from signals, not from a class substring:
+
+- `data_ad_row` — `data-ad*`, GPT slot id, or adsbygoogle
+- `ad_host_asset` — GAM / ad-network / `/mail-us/` src or href
+- `iframe` — a real iframe that is not an ad-network asset
+
+### Candidate selector
+
+Precision over coverage. At most 24 candidates per page.
+
+Included: GAM/GPT iframes, `data-ad` rows, fixed overlays whose text is ad-like (`sponsored`, `special offer`), and the existing high-precision ad-host / Elementor slot signals.
+
+Excluded: empty presentation spacers (`role=presentation`, spacer/gap classes, short empty bars), and primary mail chrome (toolbar, compose, folder list, message-list rows) unless the node itself is an ad signal.
+
+### Kind gap (hosted response)
+
+Live Dagote jev-tiny returns each element as `{id, noul, action, reason}` and **omits `kind`**. The client does not invent a host kind.
+
+Rank policy when `kind` is missing and (`action` is `hide` or `noul` ≥ hideMin, default 0.75):
+
+- Apply the **ad** rank (enabled flag and that rank’s hideMin) for the hide decision only.
+- Record `kind: kind_missing_host`, `kindPolicy: ad`, `hostKind: null`, `reason: kind_missing_host`.
+- A missing kind below the ad threshold is not hidden, even if the host action string is `hide`.
+
+If the host does send `kind`, that value is used and `kind_missing_host` is not applied.
+
+Live jev-tiny does **not** pass on noul alone. See `docs/contract-matrix.md`.
+
+- `servedby.doubleclick.net` scores about **0.90 hide**. Promoting that src is enough.
+- `gpt.mail.aol.com/f/gam/gptIframe` scores about **0.27 allow**. The host’s ad-host prior does not see a first-party mail GAM host. The client sends `discover: ad_host_asset` and hint `first-party mail GAM iframe`, then applies **`prior_mail_gam`** when noul is below the ad rank. The stored noul stays the host value. This is a prior, not an Extreme force-hide cheat.
+- A `data_ad_row` with a weak noul gets **`prior_data_ad_row`** the same way.
+- Capital One–style ad text stays about **0.62–0.68 review** even with `discover: ad_label` and an Advertisement label. There is no client prior for that copy. Field tweaks do not make it a hide. Passing it needs the host to return `kind` (or a real text prior on the API).
+- Empty spacers are noisy (about 0.44 allow, 0.56 review, or 0.82 hide). Do not trust noul alone. The selector does not send them.
+- `kind` is still always null. `kind_missing_host` only labels that gap. It does not invent a host class.
+
+### Call budget
+
+One in-flight page-judge (background abort on overlap). Content coalesces boot/mutation storms. An unchanged fingerprint skips `boot2` / `boot3` / mutation repeats for 30 seconds. A manual judge always runs.
+
 ## Element kinds (`kind`)
 
 | kind | Meaning |
@@ -61,7 +122,7 @@ decision log for review mode
 
 Defaults: hide **ad**, **promo**, and **tracking_chrome** at noul ≥ 0.75. **unrelated_inject** and **donate_ask** are off (enable + set threshold to use). Persist in `chrome.storage.sync.ranks`.
 
-Decision reason when a rank fires: `rank_<kind>` (shown in the review UI).
+Decision reason when a rank fires: `rank_<kind>` (shown in the review UI). When the host omits kind, the review label is `kind_missing_host` instead of a pretend host class.
 
 ## Extreme force-hide cheats (legacy)
 
@@ -92,4 +153,4 @@ Page-judge uses `noul` (ad / unrelated) and `choice` (site type and element kind
 
 ## Versions
 
-Extension **0.1.7**. Server **0.3.2**. After a rank hide, one neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks (no Extreme force-hide). The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).
+Extension **0.1.8**. Server **0.3.2**. The judge POST uses the slim element contract (child iframe/href promoted; no HTML dumps). Hosted Dagote may omit `kind`; the client then applies the ad rank under the label `kind_missing_host`. After a rank hide, one neighborhood re-classify pass sends still-visible siblings in that wrapper through the same page-judge and ranks (no Extreme force-hide). The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Repeat fingerprints skip extra boot judges for 30 seconds. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).

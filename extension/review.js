@@ -81,6 +81,9 @@ function renderCard(row) {
   before.append(el('div', '', `${row.tag || 'node'} · ${row.id}`));
   before.append(el('div', 'meta', `Found via ${row.discover || 'unspecified'}`));
   if (row.kind) before.append(el('div', 'meta', `Class ${row.kind}`));
+  if (row.kindPolicy) before.append(el('div', 'meta', `Rank policy ${row.kindPolicy}`));
+  if (row.kind === 'kind_missing_host') before.append(el('div', 'meta', 'Host omitted kind'));
+  if (row.prior) before.append(el('div', 'meta', `Client prior ${row.prior}`));
   const bits = [];
   if (row.href) bits.push(`href ${row.href}`);
   if (row.src) bits.push(`src ${row.src}`);

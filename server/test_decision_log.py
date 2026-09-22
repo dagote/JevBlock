@@ -197,6 +197,22 @@ class PageJudgePriorTests(unittest.TestCase):
 		noul, reason = app.apply_element_priors(iframe, 0.2, "news", "s1_ad_or_unrelated")
 		self.assertEqual(reason, "s1_plus_adhost_prior")
 
+		aol = app.PageElement(
+			id="e",
+			tag="iframe",
+			src="https://gpt.mail.aol.com/f/gam/gptIframe?sz=300x250",
+		)
+		noul, reason = app.apply_element_priors(aol, 0.27, "mail", "s1_ad_or_unrelated")
+		self.assertEqual((noul, reason), (0.9, "s1_plus_mail_gam_prior"))
+
+		data_ad = app.PageElement(id="e", tag="div", discover="data_ad_row", text="Capital One")
+		noul, reason = app.apply_element_priors(data_ad, 0.4, "mail", "s1_ad_or_unrelated")
+		self.assertEqual((noul, reason), (0.9, "s1_plus_data_ad_row_prior"))
+
+		copy = app.PageElement(id="e", tag="a", discover="ad_label", text="Advertisement Capital One bonus")
+		noul, reason = app.apply_element_priors(copy, 0.65, "mail", "s1_ad_or_unrelated")
+		self.assertEqual(reason, "ad_label")
+
 		story = app.PageElement(id="e", tag="a", href="https://head.com/story")
 		noul, reason = app.apply_element_priors(story, 0.1, "news", "s1_ad_or_unrelated")
 		self.assertEqual((noul, reason), (0.1, "s1_ad_or_unrelated"))

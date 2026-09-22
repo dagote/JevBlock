@@ -47,8 +47,62 @@ test('page-judge request sends explicit model and x-api-key', () => {
   assert.equal(req.headers['x-api-key'], 'secret-key');
   assert.equal(req.body.model, 'jev-3b');
   assert.equal(req.body.hideMin, 0.7);
+  assert.equal(req.body.elements[0].id, 'e0');
+  assert.equal(Object.hasOwn(req.body.elements[0], 'outerHTML'), false);
+  assert.equal(Object.hasOwn(req.body.elements[0], 'classes'), false);
   assert.equal(req.body.sessionId, 's1');
   assert.equal(JSON.stringify(req.body).includes('secret-key'), false);
+});
+
+test('page-judge wire drops HTML dumps and debug-only fields', () => {
+  const req = buildPageJudgeRequest(
+    { serverUrl: 'https://www.dagote.ai/api/jev', apiKey: '', model: 'jev-tiny' },
+    {
+      page: { url: 'https://mail.aol.com/' },
+      elements: [
+        {
+          id: 'e0',
+          tag: 'iframe',
+          role: 'presentation',
+          text: 'Capital One',
+          nearbyLabel: 'Advertisement',
+          href: 'https://www.capitalone.com/x',
+          src: 'https://securepubads.g.doubleclick.net/gampad/ads',
+          hrefHost: 'www.capitalone.com',
+          srcHost: 'securepubads.g.doubleclick.net',
+          rect: { w: 300, h: 250, x: 1, y: 2 },
+          fixedOrSticky: false,
+          discover: 'ad_host_asset',
+          hint: 'ad-network asset',
+          classes: ['rail', 'ad'],
+          idAttr: 'slot',
+          ariaLabel: 'ad',
+          testId: 'x',
+          outerHTML: '<iframe src="https://example.test"></iframe>',
+          innerText: 'dump',
+        },
+      ],
+    },
+  );
+  const row = req.body.elements[0];
+  assert.deepEqual(Object.keys(row).sort(), [
+    'discover',
+    'fixedOrSticky',
+    'hint',
+    'href',
+    'hrefHost',
+    'id',
+    'nearbyLabel',
+    'rect',
+    'role',
+    'src',
+    'srcHost',
+    'tag',
+    'text',
+  ]);
+  assert.equal(row.outerHTML, undefined);
+  assert.equal(row.classes, undefined);
+  assert.equal(row.innerText, undefined);
 });
 
 test('blank api key is omitted and blank model falls back to jev-tiny', () => {
