@@ -170,6 +170,39 @@ class PageJudgePriorTests(unittest.TestCase):
 			)
 		)
 
+	def test_blank_slot_and_ad_label_priors(self) -> None:
+		blank = app.PageElement(
+			id="e",
+			tag="div",
+			classes=["elementor-widget", "elementor-widget-html", "elementor-element-8db3f61"],
+			discover="blank_html_widget",
+			text="",
+		)
+		self.assertEqual(app.blank_slot_judgment(blank), (0.9, "blank_ad_slot"))
+		self.assertEqual(
+			app.apply_element_priors(blank, 0.08, "marketing", "s1_ad_or_unrelated"),
+			(0.9, "blank_ad_slot"),
+		)
+		label = app.PageElement(
+			id="e",
+			tag="div",
+			classes=["elementor-widget-html"],
+			discover="ad_label",
+			text="Advertisement",
+		)
+		self.assertEqual(app.ad_label_judgment(label), (0.9, "ad_label"))
+		hosted = app.PageElement(
+			id="e",
+			tag="div",
+			discover="blank_html_widget",
+			src="//ybs2ffs7v.com/lv/esnk/1837835/code.js",
+		)
+		self.assertIsNone(app.blank_slot_judgment(hosted))
+		self.assertEqual(
+			app.apply_element_priors(hosted, 0.1, "marketing", "s1_ad_or_unrelated")[1],
+			"s1_plus_adhost_prior",
+		)
+
 	def test_priors_do_not_relabel_a_high_score_or_a_skip(self) -> None:
 		host = app.PageElement(id="e", href="https://ad.com/x")
 		self.assertEqual(

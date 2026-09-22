@@ -2,7 +2,7 @@
 
 Chrome extension + intranet service that uses a **System One / Jev-compatible** judge to score page elements as ads (or unrelated chrome) given whole-page context.
 
-Extension version is `extension/manifest.json` (**0.0.4**). Server version is **0.2.2**.
+Extension version is `extension/manifest.json` (**0.0.5**). Server version is **0.2.3**.
 
 ## How it works
 
@@ -84,7 +84,7 @@ Set those env vars to keep an older absolute path. `./scripts/tail-logs.sh` read
 
 Response includes `site_type`, probabilities, per-element `noul` / `action`, plus `hideMin` and `reviewMin`.
 
-The extension builds a decision log (`schema: adgate.decision_log.v1`) after it applies removals. Each element has `id`, `tag`, `src`, `classes`, `rect`, `noul`, `action`, `reason`, `removed`, and `cascadeParents` (`reason: empty_parent`). That object is stored in `chrome.storage.local`, shipped through `POST /v1/log` as a `decision_run` entry, and written to the run files above. The review page can export JSON and JSONL, or load a file (including `fixtures/decision-log.sample.json`).
+The extension builds a decision log (`schema: adgate.decision_log.v1`) after it applies removals. Each element has `id`, `tag`, `src`, `href`, `classes`, `idAttr`, `text`, `role`, `rect`, `fixedOrSticky`, `discover` (why the live scan kept the node), `noul`, `action`, `reason`, `removed`, and `cascadeParents` (`reason: empty_parent`). That object is stored in `chrome.storage.local`, shipped through `POST /v1/log` as a `decision_run` entry, and written to the run files above. The review page shows the candidate count and a “Found via” tally. It can export JSON and JSONL, or load a file (including `fixtures/decision-log.sample.json`).
 
 `GET /v1/runs/latest` and `GET /v1/runs/{requestId}` return a saved run.
 
@@ -95,10 +95,10 @@ Target: https://canyoublockit.com/extreme-test/
 This page is a stress catalog (pop-unders, interstitials, push prompts, in-page push, banners, ad hosts). It is not a claim that every cell is blocked.
 
 1. Start jev-local and adgate (above). Confirm `GET /health` shows `jev_ok` if the scorer is up.
-2. Load unpacked `extension/` and confirm the card says **0.0.4**.
-3. Set the server URL. Enable **Block — remove ads and empty parents**. Leave hide minimum at **0.75** unless you are tuning.
-4. Open the Extreme Test page and click **Judge this tab**. Review mode opens a list of removals with scores and reasons. The page itself should not grow `%` chips.
-5. Check empty parents in the “After” column (`reason: empty_parent`). Export JSON/JSONL or reload the latest run from the review page.
+2. Load unpacked `extension/` and confirm the card says **0.0.5**. Reload the extension if it still says 0.0.4 — that build’s scan missed the live slots.
+3. Set the server URL (for this machine, `http://127.0.0.1:8770`). Enable **Block — remove ads and empty parents**. Leave hide minimum at **0.75** unless you are tuning.
+4. Open https://canyoublockit.com/extreme-test/ and reload it so the 0.0.5 content script attaches. Click **Judge this tab**. Review mode opens a list of removals with scores, reasons, and **Found via** (the discovery reason). The page itself should not grow `%` chips.
+5. Check empty parents in the “After” column (`reason: empty_parent`). The summary line starts with the candidate count. Export JSON/JSONL or reload the latest run from the review page.
 6. Optional **Advanced → Extreme early defenses**, then reload the test tab. That registers `early.js` at `document_start` in the page world (pop-under gate + notification deny + known-host node strip). **Block** also enables `rules.json` through `declarativeNetRequest` for known ad hosts. With Block off, those network rules stay disabled so the judge can still see the requests.
 7. Nodes that early defenses or DNR remove before the judge never appear in the decision log. The log is the DOM judge’s record.
 
@@ -111,7 +111,8 @@ server/.venv/bin/python -m unittest server.test_decision_log
 
 ## Notes
 
-- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`). Extreme Test pass 1 (hide 12 / allow 12, no overblocks) missed ad-host links, `ad.com`, overlays, push-permission prompts, and `role=advertisement`. Those now floor or short-circuit with reasons `s1_plus_adhost_prior`, `s1_plus_overlay_prior`, `s1_plus_push_permission_prior`, and `aria_ad`. Restart adgate to pick them up; the extension does not need a reload for the prior change.  
+- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`). Discovery of the live Extreme DOM is in the extension (`extension/candidates.js`). Reload **0.0.5** and restart adgate **0.2.3** before judging again. A hand-built `/v1/page-judge` payload is not a live pass.
+- `node --test extension/*.test.js` includes `extension/candidates.test.js`, which loads `fixtures/extreme-test.snippet.html` (sliced from the live Extreme page) under linkedom. Install that dev dependency with `npm install` first.  
 - Page context is kept small; elements are scored **one call each**. Oversized prefixes are skipped silently for that element.  
 - Do not commit `logs/` or `*.zip` builds.
 

@@ -9,7 +9,7 @@ const DEFAULTS = {
   uiRev: 1,
   serverUrl: 'http://192.168.0.119:8770',
 };
-const NEED = '0.0.4';
+const NEED = '0.0.5';
 const $ = (id) => document.getElementById(id);
 
 function setStatus(text, cls) {
@@ -26,7 +26,7 @@ function render(scan) {
   const s = scan.summary || {};
   const lines = [
     `${scan.site_type || 'unknown site'} · ${scan.blockEnabled ? 'block on' : 'block off'}`,
-    `${s.removed ?? s.hidden ?? 0} removed · ${s.cascadeRemoved ?? 0} empty parents · ${s.review ?? 0} in review band`,
+    `${s.candidates ?? 0} candidates · ${s.removed ?? s.hidden ?? 0} removed · ${s.cascadeRemoved ?? 0} empty parents · ${s.review ?? 0} in review band`,
     (scan.page?.url || scan.url || '').slice(0, 120),
   ];
   for (const line of lines) {

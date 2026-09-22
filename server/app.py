@@ -21,7 +21,7 @@ JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
 SERVER_DIR = Path(__file__).resolve().parent
 REVIEW_MIN = 0.45
-SERVER_VERSION = "0.2.2"
+SERVER_VERSION = "0.2.3"
 
 
 def resolve_path(env_value: str | None, default: Path) -> Path:
@@ -115,6 +115,24 @@ def aria_ad_judgment(el: PageElement) -> tuple[float, str] | None:
 	return None
 
 
+def blank_slot_judgment(el: PageElement) -> tuple[float, str] | None:
+	"""Empty Elementor html widgets are unfilled ad slots on Extreme Test."""
+	if (el.discover or "") != "blank_html_widget":
+		return None
+	if _matches_ad_host(el):
+		return None
+	return PRIOR_FLOOR, "blank_ad_slot"
+
+
+def ad_label_judgment(el: PageElement) -> tuple[float, str] | None:
+	"""Widget whose only visible text is an Advertisement label."""
+	if (el.discover or "") != "ad_label":
+		return None
+	if _matches_ad_host(el):
+		return None
+	return PRIOR_FLOOR, "ad_label"
+
+
 def _matches_ad_host(el: PageElement) -> bool:
 	return bool(AD_HOST_RE.search(el.src or "") or AD_HOST_RE.search(el.href or ""))
 
@@ -155,6 +173,10 @@ def apply_element_priors(
 		return PRIOR_FLOOR, "s1_plus_push_permission_prior"
 	if _matches_overlay(el) and noul < PRIOR_FLOOR:
 		return PRIOR_FLOOR, "s1_plus_overlay_prior"
+	if (el.discover or "") == "blank_html_widget" and not _matches_ad_host(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "blank_ad_slot"
+	if (el.discover or "") == "ad_label" and not _matches_ad_host(el) and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "ad_label"
 	return noul, reason
 
 
@@ -674,6 +696,7 @@ class PageElement(BaseModel):
 	testId: str | None = None
 	rect: dict[str, float] | None = None
 	fixedOrSticky: bool = False
+	discover: str | None = None
 
 
 class PageJudgeRequest(BaseModel):
@@ -755,6 +778,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			"testId": el.testId,
 			"rect": el.rect,
 			"fixedOrSticky": el.fixedOrSticky,
+			"discover": el.discover,
 			"hint": hint,
 		}
 
@@ -840,8 +864,14 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		noul = 0.0
 		reason = "s1_ad_or_unrelated"
 		aria = aria_ad_judgment(el)
+		blank = blank_slot_judgment(el)
+		label = ad_label_judgment(el)
 		if aria is not None:
 			noul, reason = aria
+		elif blank is not None:
+			noul, reason = blank
+		elif label is not None:
+			noul, reason = label
 		else:
 			try:
 				payload = _jev(
@@ -906,6 +936,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			reason=reason,
 			tag=el.tag,
 			src=(el.src or "")[:100],
+			discover=el.discover,
 		)
 
 	ms = int((time.perf_counter() - t0) * 1000)

@@ -12,7 +12,7 @@ Feed **page context** (not just one node) into System One, then ask:
 ```
 page excerpt + headings + url
         +
-candidate elements (iframes, rails, ad-ish nodes)
+candidate elements (Extreme Elementor slots, ad-host href/src, VAST, blank html widgets, iframes, fixed overlays)
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
@@ -41,6 +41,8 @@ Server applies **transparent priors** (logged in `reason`):
 - `role=advertisement` or an ad-like `aria-label` → skip the model, `aria_ad` at 0.95
 - fixed/sticky plus dialog role or interstitial / special-offer / “click here” copy → `s1_plus_overlay_prior`, floor 0.9
 - `notification-permission` or “wants to … notifications” → `s1_plus_push_permission_prior`, floor 0.9
+- client `discover=blank_html_widget` (empty Elementor html widget) → `blank_ad_slot`, floor 0.9, skips the model
+- client `discover=ad_label` (widget whose only visible text is “Advertisement”) → `ad_label`, floor 0.9, skips the model
 
 Real hosted Jev should make those priors unnecessary; keep them labeled so we can turn them off.
 

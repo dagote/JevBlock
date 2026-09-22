@@ -28,8 +28,9 @@ Plus common networks: DoubleClick / Google Syndication, etc.
 | Pop-under | `early.js` `window.open` gate, MAIN world, only if Extreme early defenses is on |
 | Push permission | `early.js` deny `requestPermission`, same opt-in |
 | Interstitial / in-page push DOM | System One `noul` + block removes the node and empty parents |
-| Fixed/sticky overlays, iframes, known ad hosts | Candidate collection, then the same judge |
-| Late injection | Up to two debounced rescans while Block is on |
+| Elementor html widgets, `code-block` script src, `href="ad.com"`, VAST `vastTag`, empty html widgets, `role=advertisement` | `extension/candidates.js`, then the same judge. `discover` on each decision says why the node was kept |
+| Fixed/sticky dialogs, overlay/push copy, iframes, known ad hosts | Same collector. Decorative `elementor-background-overlay` is not a candidate |
+| Late injection | While Block is on: scans around 1s, 4s, 8s, and 14s, plus up to four MutationObserver rescans (1s debounce) |
 
 `early.js` is not in the manifest content_scripts list. The service worker registers it when the popup toggle is on. Reload the tab after toggling.
 

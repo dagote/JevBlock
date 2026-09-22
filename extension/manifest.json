@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.4",
-  "description": "0.0.4 — review mode; remove ads and empty parents; decision log",
+  "version": "0.0.5",
+  "description": "0.0.5 — review mode; Extreme DOM scan; remove ads and empty parents",
   "permissions": [
     "storage",
     "activeTab",
@@ -45,6 +45,7 @@
       "js": [
         "empty-parent.js",
         "decision-log.js",
+        "candidates.js",
         "logger.js",
         "content.js"
       ],

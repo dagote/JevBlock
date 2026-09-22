@@ -16,6 +16,8 @@ logs/
 *.zip
 adgate-*.zip
 
+node_modules/
+
 # editor / OS
 .DS_Store
 .idea/

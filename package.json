@@ -1,0 +1,11 @@
+{
+  "name": "adgate",
+  "private": true,
+  "description": "Dev tests for the Adgate extension DOM scan",
+  "scripts": {
+    "test": "node --test extension/*.test.js"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.12"
+  }
+}

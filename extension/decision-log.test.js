@@ -21,6 +21,8 @@ test('buildDecisionLog records removal, review band, and cascade parents', () =>
         id: 'e0',
         tag: 'iframe',
         src: 'https://12ezo5v60.com/push',
+        href: null,
+        discover: 'ad_host_script',
         classes: ['ad-frame'],
         rect: { w: 300, h: 250, x: 10, y: 20 },
         noul: 0.93,
@@ -50,6 +52,8 @@ test('buildDecisionLog records removal, review band, and cascade parents', () =>
   assert.equal(run.summary.review, 1);
   assert.equal(run.summary.cascadeRemoved, 1);
   assert.equal(run.decisions[0].removed, true);
+  assert.equal(run.decisions[0].discover, 'ad_host_script');
+  assert.equal(run.decisions[0].href, null);
   assert.equal(run.decisions[0].cascadeParents[0].reason, 'empty_parent');
   assert.deepEqual(run.decisions[1].classes, ['overlay', 'sticky']);
   const line = toJsonl(run);

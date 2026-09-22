@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.4 — page judge, block path, review log.
+ * Adgate 0.0.5 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -12,14 +12,11 @@ const DEFAULTS = {
   showPanel: false,
   extremeEarly: false,
   uiRev: 1,
-  maxElements: 16,
+  maxElements: 24,
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.4';
-const AD_SRC_RE =
-  /mail-us|doubleclick|googlesyndication|pagead2|adnxs|taboola|outbrain|amazon-adsystem|googletagservices|adservice\.google|popads|propellerads|adsterra|clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|fvcwqkkqmuv/i;
-const AD_HINT_RE = /ad|ads|sponsor|promo|banner|gpt|dfp|interstitial|overlay|popunder|push/i;
+const CLIENT = 'extension-0.0.5';
 
 let suppressMutations = false;
 
@@ -42,13 +39,6 @@ function cls(el) {
   if (!el?.className) return '';
   if (typeof el.className === 'string') return el.className;
   return String(el.className.baseVal || '');
-}
-
-function isPageLandmark(el) {
-  const tag = el.tagName.toLowerCase();
-  if (['html', 'body', 'main', 'header', 'nav', 'footer'].includes(tag)) return true;
-  const role = (el.getAttribute('role') || '').toLowerCase();
-  return role === 'main';
 }
 
 function isLayoutShell(el) {
@@ -93,34 +83,20 @@ function extractPage() {
   };
 }
 
-function serializeEl(el, id) {
-  const r = el.getBoundingClientRect();
-  let stylePos = '';
-  try {
-    stylePos = getComputedStyle(el).position;
-  } catch {
-    /* ignore */
-  }
-  let text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  if (text.length > 180) text = text.slice(0, 180);
+function layoutHooks() {
   return {
-    id,
-    tag: el.tagName.toLowerCase(),
-    idAttr: el.id || null,
-    classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
-    role: el.getAttribute('role'),
-    ariaLabel: el.getAttribute('aria-label'),
-    text,
-    href: el.href || el.getAttribute('href') || null,
-    src: el.currentSrc || el.src || el.getAttribute('src') || null,
-    testId: el.getAttribute('data-test-id'),
-    rect: {
-      w: Math.round(r.width),
-      h: Math.round(r.height),
-      y: Math.round(r.top + window.scrollY),
-      x: Math.round(r.left + window.scrollX),
+    getRect(el) {
+      return el.getBoundingClientRect();
     },
-    fixedOrSticky: stylePos === 'fixed' || stylePos === 'sticky' || stylePos === 'absolute',
+    getStyle(el) {
+      return getComputedStyle(el);
+    },
+    viewport: {
+      width: window.innerWidth || 1280,
+      height: window.innerHeight || 720,
+    },
+    scrollX: window.scrollX || 0,
+    scrollY: window.scrollY || 0,
   };
 }
 
@@ -142,177 +118,25 @@ function snapshotEl(el) {
   return { html, text };
 }
 
-function candidatePriority(el) {
-  const tag = el.tagName.toLowerCase();
-  const src = el.currentSrc || el.src || el.getAttribute('src') || '';
-  const testId = el.getAttribute('data-test-id') || '';
-  const c = cls(el);
-  const id = el.id || '';
-  let r;
-  try {
-    r = el.getBoundingClientRect();
-  } catch {
-    r = { width: 0, height: 0 };
-  }
-  const area = Math.max(r.width, 0) * Math.max(r.height, 0);
-  let pos = '';
-  try {
-    pos = getComputedStyle(el).position;
-  } catch {
-    /* ignore */
-  }
-  const overlay = pos === 'fixed' || pos === 'sticky';
-
-  if (tag === 'iframe' && AD_SRC_RE.test(src)) return 1_000_000 + area;
-  if (tag === 'ins' && /adsbygoogle/i.test(c)) return 900_000 + area;
-  if (el.getAttribute('data-ad-client') || el.getAttribute('data-ad-slot')) return 880_000 + area;
-  if (/^(right-rail-ad|gam-iframe-basic-mail|mail-right-rail)$/i.test(testId)) return 860_000 + area;
-  if (tag === 'iframe' && src) return 700_000 + area;
-  if (tag === 'iframe') return 650_000 + area;
-  if (overlay && (AD_HINT_RE.test(`${id} ${c}`) || area > 40_000)) return 640_000 + area;
-  if (/google-auto-placed/i.test(c) || /div-gpt-ad|google_ads/i.test(id)) return 600_000 + area;
-  if (AD_HINT_RE.test(testId + c + id)) return 200_000 + area;
-  return area;
-}
-
-function collectFixedOverlays(seeds) {
-  let checked = 0;
-  const nodes = document.querySelectorAll('div, aside, section, iframe, ins, a');
-  for (const el of nodes) {
-    if (checked++ > 300) break;
-    if (seeds.has(el) || isPageLandmark(el)) continue;
-    let pos = '';
-    let z = 0;
-    try {
-      const cs = getComputedStyle(el);
-      pos = cs.position;
-      z = Number.parseInt(cs.zIndex, 10) || 0;
-    } catch {
-      continue;
-    }
-    if (pos !== 'fixed' && pos !== 'sticky') continue;
-    let r;
-    try {
-      r = el.getBoundingClientRect();
-    } catch {
-      continue;
-    }
-    const vp = Math.max(window.innerWidth * window.innerHeight, 1);
-    const cov = (Math.max(r.width, 0) * Math.max(r.height, 0)) / vp;
-    const hinted = AD_HINT_RE.test(`${el.id || ''} ${cls(el)}`);
-    const tag = el.tagName.toLowerCase();
-    const large = cov >= 0.18;
-    const highFloat = z >= 2000 && r.height >= 120 && r.width >= 200;
-    if (large || hinted || highFloat || (tag === 'iframe' && (cov >= 0.05 || r.height >= 40))) {
-      seeds.add(el);
-    }
-  }
-}
-
-/** Candidate pool — iframes, ad hosts, and fixed/sticky overlays. */
+/** Live DOM scan. Zero-size Elementor slots stay; substring class matches do not. */
 function collectElements(max) {
-  const seeds = new Set();
-  const sels = [
-    'iframe',
-    'ins.adsbygoogle',
-    'ins[class*="ad"]',
-    '[data-ad-client]',
-    '[data-ad-slot]',
-    '.google-auto-placed',
-    '[id*="google_ads"]',
-    '[id*="div-gpt-ad"]',
-    '[data-test-id*="rail"]',
-    '[data-test-id*="ad"]',
-    '[data-test-id*="gam"]',
-    '[data-test-id*="sponsor"]',
-    'aside',
-    '[class*="ad-"]',
-    '[class*="ads"]',
-    '[class*="sponsor"]',
-    '[class*="banner"]',
-    '[class*="interstitial"]',
-    '[id*="interstitial"]',
-    '[class*="overlay"]',
-    '[id*="overlay"]',
-    '[class*="pushdown"]',
-    '[class*="ad-push"]',
-    '[id*="ad-push"]',
-    '[id*="ad"]',
-    '[id*="gpt"]',
-    'object',
-    'embed',
-  ];
-  for (const s of sels) {
-    try {
-      document.querySelectorAll(s).forEach((n) => seeds.add(n));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  document.querySelectorAll('*').forEach((host) => {
-    if (host.shadowRoot) {
-      try {
-        host.shadowRoot.querySelectorAll('iframe, ins, [data-ad-slot]').forEach((n) => seeds.add(n));
-      } catch {
-        /* ignore */
-      }
-    }
+  const picked = globalThis.AdgateCandidates.collectCandidates(document, {
+    ...layoutHooks(),
+    max,
   });
-
-  try {
-    collectFixedOverlays(seeds);
-  } catch {
-    /* ignore */
-  }
-
-  const scored = [];
-  for (const el of seeds) {
-    if (!(el instanceof Element)) continue;
-    if (el.closest('[data-adgate-blocked],[data-adgate-ignore]')) continue;
-    const tag = el.tagName.toLowerCase();
-    if (['script', 'style', 'link', 'meta', 'noscript', 'html', 'body'].includes(tag)) continue;
-    if (isPageLandmark(el)) continue;
-    if (isLayoutShell(el) && !['iframe', 'ins', 'object', 'embed'].includes(tag)) continue;
-    const r = el.getBoundingClientRect();
-    const src = el.src || el.getAttribute('src') || '';
-    const adSrc = AD_SRC_RE.test(src);
-    if (!adSrc && (r.width < 16 || r.height < 16)) continue;
-    scored.push({ el, tag, pri: candidatePriority(el), src: src.slice(0, 120) });
-  }
-  scored.sort((a, b) => b.pri - a.pri);
-
-  const picked = [];
-  for (const item of scored) {
-    let conflictIdx = -1;
-    for (let i = 0; i < picked.length; i++) {
-      const p = picked[i];
-      if (p.el.contains(item.el) || item.el.contains(p.el)) {
-        conflictIdx = i;
-        break;
-      }
-    }
-    if (conflictIdx >= 0) {
-      if (item.pri > picked[conflictIdx].pri) picked.splice(conflictIdx, 1, item);
-      continue;
-    }
-    picked.push(item);
-    if (picked.length >= max) break;
-  }
-
   log('info', 'candidates_collected', {
     max,
-    totalSeeds: seeds.size,
     picked: picked.length,
-    sample: picked.slice(0, 8).map((p) => ({
-      tag: p.tag,
-      pri: Math.round(p.pri),
-      src: p.src,
-      cls: cls(p.el).slice(0, 40),
+    sample: picked.slice(0, 12).map((item) => ({
+      tag: item.el.tagName.toLowerCase(),
+      discover: item.discover,
+      pri: Math.round(item.pri),
+      src: (item.evidence || '').slice(0, 140),
+      cls: cls(item.el).slice(0, 80),
+      id: item.el.id || '',
     })),
   });
-
-  return picked.map((p) => p.el);
+  return picked;
 }
 
 function hideEl(el, noul) {
@@ -448,7 +272,8 @@ function renderPanel(payload) {
         <div><b style="color:${colorForP(d.noul)}">${pct}%</b>
           · <code>${d.id}</code> · ${d.tag} · <i>${d.action}</i>
           ${d.removed ? ' · removed' : ''}
-          ${d.reason ? ` · ${d.reason}` : ''}</div>
+          ${d.reason ? ` · ${d.reason}` : ''}
+          ${d.discover ? ` · via ${escapeHtml(d.discover)}` : ''}</div>
         ${d.src ? `<div style="color:#888;word-break:break-all">src: ${escapeHtml(d.src)}</div>` : ''}
         ${(d.cascadeParents || []).length ? `<div style="color:#a78bfa">empty parents: ${d.cascadeParents.length}</div>` : ''}
       </div>`;
@@ -522,9 +347,10 @@ async function runJudge(trigger) {
 
   clearAnnotations();
   const page = extractPage();
-  const nodes = collectElements(Number(settings.maxElements) || 12);
-  const elements = nodes.map((el, i) => serializeEl(el, `e${i}`));
-  const byId = Object.fromEntries(nodes.map((el, i) => [`e${i}`, el]));
+  const picked = collectElements(Number(settings.maxElements) || 24);
+  const hooks = layoutHooks();
+  const elements = picked.map((item, i) => globalThis.AdgateCandidates.serializeCandidate(item, `e${i}`, hooks));
+  const byId = Object.fromEntries(picked.map((item, i) => [`e${i}`, item.el]));
 
   log('info', 'judge_start', { trigger, n: elements.length, title: page.title.slice(0, 80) });
 
@@ -575,12 +401,15 @@ async function runJudge(trigger) {
       id: j.id,
       tag: ser.tag || el?.tagName?.toLowerCase() || '',
       src: ser.src || null,
+      href: ser.href || null,
       classes: ser.classes || [],
       idAttr: ser.idAttr || null,
+      role: ser.role || null,
       rect: ser.rect || null,
       text: ser.text || '',
       testId: ser.testId || null,
       fixedOrSticky: !!ser.fixedOrSticky,
+      discover: ser.discover || '',
       noul: j.noul,
       action: j.action,
       reason: j.reason,
@@ -601,6 +430,8 @@ async function runJudge(trigger) {
       noul: j.noul,
       action: j.action,
       reason: j.reason,
+      discover: row.discover,
+      href: row.href,
       removed,
       cascade: cascade.length,
       blockEnabled,
@@ -691,13 +522,13 @@ function watchLateInject(settings) {
   let timer = null;
   let extra = 0;
   const mo = new MutationObserver(() => {
-    if (suppressMutations || extra >= 2) return;
+    if (suppressMutations || extra >= 4) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       if (suppressMutations) return;
       extra += 1;
       safeJudge('mutation');
-    }, 1600);
+    }, 1000);
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
   window.__adgateMo = mo;
@@ -709,9 +540,18 @@ window.addEventListener('adgate-early-log', (event) => {
   log('info', detail.event, detail.fields || {});
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync' || !changes.blockEnabled?.newValue) return;
+  loadSettings().then((s) => {
+    if (s.enabled === false || s.blockEnabled !== true) return;
+    watchLateInject(s);
+    safeJudge('block-on');
+  });
+});
+
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.4-review',
+    mode: '0.0.5-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,
@@ -719,5 +559,9 @@ loadSettings().then((s) => {
   if (s.enabled === false) return;
   watchLateInject(s);
   setTimeout(() => safeJudge('boot'), 1000);
-  setTimeout(() => safeJudge('boot2'), 3500);
+  setTimeout(() => safeJudge('boot2'), 4000);
+  if (s.blockEnabled === true) {
+    setTimeout(() => safeJudge('boot3'), 8000);
+    setTimeout(() => safeJudge('boot4'), 14000);
+  }
 });
