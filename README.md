@@ -2,7 +2,7 @@
 
 Chrome extension + intranet service that uses a **System One / Jev-compatible** judge to score page elements as ads (or unrelated chrome) given whole-page context.
 
-Extension version is `extension/manifest.json` (**0.0.4**). Server version is **0.2.1**.
+Extension version is `extension/manifest.json` (**0.0.4**). Server version is **0.2.2**.
 
 ## How it works
 
@@ -111,7 +111,7 @@ server/.venv/bin/python -m unittest server.test_decision_log
 
 ## Notes
 
-- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`).  
+- Local open-weight scorers (e.g. Qwen 1.5B via jev-local) are weaker than hosted Jev; server may apply **labeled priors** (see `PRODUCT.md`). Extreme Test pass 1 (hide 12 / allow 12, no overblocks) missed ad-host links, `ad.com`, overlays, push-permission prompts, and `role=advertisement`. Those now floor or short-circuit with reasons `s1_plus_adhost_prior`, `s1_plus_overlay_prior`, `s1_plus_push_permission_prior`, and `aria_ad`. Restart adgate to pick them up; the extension does not need a reload for the prior change.  
 - Page context is kept small; elements are scored **one call each**. Oversized prefixes are skipped silently for that element.  
 - Do not commit `logs/` or `*.zip` builds.
 

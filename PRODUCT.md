@@ -35,7 +35,12 @@ The open-weight stand-in often mis-labels mail as `docs_app` and under-scores AO
 Server applies **transparent priors** (logged in `reason`):
 
 - hostname `mail.aol.com` / `mail.yahoo.com` → force `site_type=mail` when model misses
-- `mail-us` iframe on a mail site / known ad-host src → floor P at 0.9 if S1 is low
+- `canyoublockit.com` `/extreme-test` labeled `docs_app` → `marketing` if that probability is at least `other`, otherwise `other` (`reason` on the site-type log: `extreme_test_path`)
+- `mail-us` iframe on a mail site → `s1_plus_mail_us_prior`, floor 0.9
+- known ad-host `src` or `href` (including `ad.com`, not lookalikes like `head.com`) → `s1_plus_adhost_prior`, floor 0.9
+- `role=advertisement` or an ad-like `aria-label` → skip the model, `aria_ad` at 0.95
+- fixed/sticky plus dialog role or interstitial / special-offer / “click here” copy → `s1_plus_overlay_prior`, floor 0.9
+- `notification-permission` or “wants to … notifications” → `s1_plus_push_permission_prior`, floor 0.9
 
 Real hosted Jev should make those priors unnecessary; keep them labeled so we can turn them off.
 

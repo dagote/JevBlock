@@ -75,5 +75,111 @@ class DecisionLogTests(unittest.TestCase):
 		self.assertEqual(latest.json()["requestId"], "dry-extreme-sample")
 
 
+class PageJudgePriorTests(unittest.TestCase):
+	def test_ad_host_matches_href_and_ad_com_only(self) -> None:
+		linked = app.PageElement(id="e", tag="a", href="https://ad.com/click")
+		noul, reason = app.apply_element_priors(linked, 0.12, "marketing", "s1_ad_or_unrelated")
+		self.assertEqual((noul, reason), (0.9, "s1_plus_adhost_prior"))
+
+		iframe = app.PageElement(id="e", tag="iframe", src="https://servedby.doubleclick.net/ad")
+		noul, reason = app.apply_element_priors(iframe, 0.2, "news", "s1_ad_or_unrelated")
+		self.assertEqual(reason, "s1_plus_adhost_prior")
+
+		story = app.PageElement(id="e", tag="a", href="https://head.com/story")
+		noul, reason = app.apply_element_priors(story, 0.1, "news", "s1_ad_or_unrelated")
+		self.assertEqual((noul, reason), (0.1, "s1_ad_or_unrelated"))
+		self.assertIsNone(app.AD_HOST_RE.search("https://head.com/story"))
+		self.assertIsNone(app.AD_HOST_RE.search("https://notad.com/x"))
+
+	def test_overlay_and_push_priors_are_labeled(self) -> None:
+		dialog = app.PageElement(id="e", fixedOrSticky=True, role="dialog", text="Welcome")
+		self.assertEqual(
+			app.apply_element_priors(dialog, 0.2, "marketing", "s1_ad_or_unrelated"),
+			(0.9, "s1_plus_overlay_prior"),
+		)
+		offer = app.PageElement(id="e", fixedOrSticky=True, classes=["slot"], text="Special Offer")
+		self.assertEqual(
+			app.apply_element_priors(offer, 0.4, "marketing", "s1_ad_or_unrelated")[1],
+			"s1_plus_overlay_prior",
+		)
+		click = app.PageElement(id="e", fixedOrSticky=True, text="Click here")
+		self.assertEqual(
+			app.apply_element_priors(click, 0.3, "other", "s1_ad_or_unrelated")[1],
+			"s1_plus_overlay_prior",
+		)
+		loose = app.PageElement(id="e", fixedOrSticky=False, role="dialog", text="interstitial")
+		self.assertEqual(
+			app.apply_element_priors(loose, 0.2, "marketing", "s1_ad_or_unrelated")[1],
+			"s1_ad_or_unrelated",
+		)
+
+		push = app.PageElement(id="e", classes=["notification-permission"], text="Allow")
+		self.assertEqual(
+			app.apply_element_priors(push, 0.15, "marketing", "s1_ad_or_unrelated"),
+			(0.9, "s1_plus_push_permission_prior"),
+		)
+		prose = app.PageElement(id="e", text="This site wants to send you notifications")
+		self.assertEqual(
+			app.apply_element_priors(prose, 0.1, "marketing", "s1_ad_or_unrelated")[1],
+			"s1_plus_push_permission_prior",
+		)
+		settings = app.PageElement(id="e", text="Manage notifications in settings")
+		self.assertEqual(
+			app.apply_element_priors(settings, 0.1, "docs_app", "s1_ad_or_unrelated")[1],
+			"s1_ad_or_unrelated",
+		)
+
+	def test_aria_ad_short_circuit_and_extreme_site_bias(self) -> None:
+		self.assertEqual(app.aria_ad_judgment(app.PageElement(id="e", role="Advertisement")), (0.95, "aria_ad"))
+		self.assertEqual(app.aria_ad_judgment(app.PageElement(id="e", ariaLabel="ads")), (0.95, "aria_ad"))
+		self.assertIsNone(app.aria_ad_judgment(app.PageElement(id="e", role="button", text="Save")))
+
+		biased = app.extreme_test_site_bias(
+			"www.canyoublockit.com",
+			"https://www.canyoublockit.com/extreme-test/",
+			"docs_app",
+			{"docs_app": 0.7, "marketing": 0.2, "other": 0.05},
+			0.7,
+		)
+		self.assertEqual(biased, ("marketing", 0.2))
+		other = app.extreme_test_site_bias(
+			"",
+			"https://canyoublockit.com/extreme-test/#push",
+			"docs_app",
+			{"other": 0.4, "marketing": 0.1},
+			0.55,
+		)
+		self.assertEqual(other[0], "other")
+		self.assertIsNone(
+			app.extreme_test_site_bias(
+				"canyoublockit.com",
+				"https://canyoublockit.com/extreme-test/",
+				"news",
+				{},
+				0.4,
+			)
+		)
+		self.assertIsNone(
+			app.extreme_test_site_bias(
+				"canyoublockit.com",
+				"https://canyoublockit.com/about",
+				"docs_app",
+				{},
+				0.4,
+			)
+		)
+
+	def test_priors_do_not_relabel_a_high_score_or_a_skip(self) -> None:
+		host = app.PageElement(id="e", href="https://ad.com/x")
+		self.assertEqual(
+			app.apply_element_priors(host, 0.97, "marketing", "s1_ad_or_unrelated"),
+			(0.97, "s1_ad_or_unrelated"),
+		)
+		self.assertEqual(
+			app.apply_element_priors(host, 0.0, "marketing", "prefix_too_long_skipped"),
+			(0.0, "prefix_too_long_skipped"),
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()
