@@ -12,10 +12,15 @@
     .sub, .hint { color: #8d8da3; font-size: 12px; }
     .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
     .row span { flex: 1; }
-    label.field { display: grid; gap: 4px; margin: 8px 0; color: #aaa; }
-    input[type="text"], input[type="number"] {
+    label.field, .field { display: grid; gap: 4px; margin: 8px 0; color: #aaa; }
+    input[type="text"], input[type="number"], input[type="password"], select {
       width: 100%; box-sizing: border-box; padding: 6px 8px;
       border-radius: 6px; border: 1px solid #333; background: #0c0c12; color: #eee;
+    }
+    .model-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+    #refreshModels {
+      border: 0; border-radius: 6px; padding: 6px 8px;
+      background: #2a2a36; color: #ddd; cursor: pointer; white-space: nowrap;
     }
     .rank { display: grid; grid-template-columns: 1fr auto 72px; gap: 8px; align-items: center; margin: 6px 0; }
     .rank input[type="number"] { width: 72px; }
@@ -53,7 +58,26 @@
     <div class="rank"><span>tracking_chrome</span><input id="rank_tracking_chrome_on" type="checkbox" checked /><input id="rank_tracking_chrome_min" type="number" min="0.05" max="0.99" step="0.05" value="0.75" /></div>
   </details>
 
-  <label class="field">Server <input id="serverUrl" type="text" value="http://192.168.0.119:8770" /></label>
+  <label class="field">Service URL
+    <input id="serverUrl" type="text" value="https://www.dagote.ai/api/jev" spellcheck="false" autocomplete="off" />
+  </label>
+  <div class="hint">Where Adgate/JEV lives. Dagote hosted default; LAN Adgate example http://192.168.0.119:8770</div>
+  <label class="field">API key
+    <input id="apiKey" type="password" autocomplete="off" spellcheck="false" />
+  </label>
+  <div class="hint">Sent as x-api-key for Dagote. Optional on LAN. Stored in sync; not written to logs.</div>
+  <div class="field">Model
+    <span class="model-row">
+      <select id="model">
+        <option value="jev-tiny">jev-tiny</option>
+        <option value="jev-latest" selected>jev-latest</option>
+        <option value="jev-3b">jev-3b</option>
+      </select>
+      <button id="refreshModels" type="button">Refresh models</button>
+    </span>
+  </div>
+  <input id="modelCustom" type="text" hidden spellcheck="false" autocomplete="off" placeholder="Model id" />
+  <div class="hint">GET /models fills this list. The chosen id is sent on every page-judge call, even if that model is not loaded yet.</div>
 
   <div class="actions">
     <button id="save" type="button">Save</button>
@@ -72,6 +96,7 @@
     <div class="hint">Cheats are Extreme-specific force_hide_* selectors. Off by default. Prefer JEV + ranks.</div>
   </details>
   <script src="ranks.js"></script>
+  <script src="service-link.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

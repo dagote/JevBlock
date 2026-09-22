@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const manifest = require('./manifest.json');
 
 test('manifest wires review scripts and keeps early.js opt-in', () => {
-  assert.equal(manifest.version, '0.1.4');
+  assert.equal(manifest.version, '0.1.5');
+  assert.ok(manifest.host_permissions.includes('https://www.dagote.ai/*'));
+  assert.ok(manifest.host_permissions.includes('http://192.168.0.119:8770/*'));
   assert.ok(manifest.permissions.includes('declarativeNetRequest'));
   const rules = manifest.declarative_net_request.rule_resources[0];
   assert.equal(rules.id, 'ad_hosts');
@@ -14,6 +16,8 @@ test('manifest wires review scripts and keeps early.js opt-in', () => {
   assert.equal(scripts.includes('early.js'), false);
   assert.equal(scripts.includes('candidates.js'), true);
   assert.equal(scripts.includes('ranks.js'), true);
+  assert.equal(scripts.includes('service-link.js'), true);
+  assert.ok(scripts.indexOf('service-link.js') < scripts.indexOf('content.js'));
   assert.ok(scripts.indexOf('ranks.js') < scripts.indexOf('content.js'));
   assert.ok(scripts.indexOf('candidates.js') < scripts.indexOf('content.js'));
   assert.equal(scripts.includes('content.js'), true);

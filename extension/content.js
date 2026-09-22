@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.4 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.5 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -12,13 +12,15 @@ const DEFAULTS = {
   showPanel: false,
   extremeEarly: false,
   forceHideCheats: false,
-  uiRev: 2,
+  uiRev: 3,
   maxElements: 24,
-  serverUrl: 'http://192.168.0.119:8770',
+  serverUrl: 'https://www.dagote.ai/api/jev',
+  apiKey: '',
+  model: 'jev-latest',
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.4';
+const CLIENT = 'extension-0.1.5';
 
 let suppressMutations = false;
 
@@ -629,19 +631,15 @@ function sendMessage(msg) {
 
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(null);
-  const data = { ...DEFAULTS, ...stored };
+  const migrated = globalThis.AdgateServiceLink?.migrateStoredSettings(stored) || {
+    patch: {},
+    changed: false,
+  };
+  if (migrated.changed) await chrome.storage.sync.set(migrated.patch);
+  const data = { ...DEFAULTS, ...stored, ...migrated.patch };
   data.forceHideCheats = data.forceHideCheats === true;
   data.ranks = globalThis.AdgateRanks?.normalizeRanks(data.ranks) || data.ranks;
-  if ((stored.uiRev || 0) >= 2) return data;
-  const migrated = {
-    showLabels: false,
-    showPanel: false,
-    reviewMode: true,
-    forceHideCheats: false,
-    uiRev: 2,
-  };
-  await chrome.storage.sync.set(migrated);
-  return { ...data, ...migrated, ranks: data.ranks };
+  return data;
 }
 
 async function rememberRun(run) {
@@ -945,7 +943,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.4-classify',
+    mode: '0.1.5-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,

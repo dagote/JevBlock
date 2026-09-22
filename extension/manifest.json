@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.1.4",
-  "description": "0.1.4 — service-worker global bindings safe for importScripts",
+  "version": "0.1.5",
+  "description": "0.1.5 — Service URL defaults to Dagote hosted JEV; API key and explicit model",
   "permissions": [
     "storage",
     "activeTab",
@@ -10,6 +10,7 @@
     "declarativeNetRequest"
   ],
   "host_permissions": [
+    "https://www.dagote.ai/*",
     "http://192.168.0.119:8770/*",
     "http://127.0.0.1:8770/*",
     "http://localhost:8770/*",
@@ -48,6 +49,7 @@
         "candidates.js",
         "ranks.js",
         "logger.js",
+        "service-link.js",
         "content.js"
       ],
       "run_at": "document_idle"

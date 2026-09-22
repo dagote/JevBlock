@@ -1,6 +1,7 @@
-/** Adgate 0.1.4 — service worker (only place that fetch()es LAN HTTP). */
+/** Adgate 0.1.5 — service worker. page-judge and log fetch live here. */
 
 importScripts('page-judge-flight.js');
+importScripts('service-link.js');
 
 const DEFAULTS = {
   enabled: true,
@@ -11,12 +12,14 @@ const DEFAULTS = {
   showPanel: false,
   extremeEarly: false,
   forceHideCheats: false,
-  uiRev: 2,
+  uiRev: 3,
   maxElements: 24,
-  serverUrl: 'http://192.168.0.119:8770',
+  serverUrl: 'https://www.dagote.ai/api/jev',
+  apiKey: '',
+  model: 'jev-latest',
 };
 
-const VERSION = '0.1.4';
+const VERSION = '0.1.5';
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';
 // Do not destructure PAGE_JUDGE_TIMEOUT_MS / createPageJudgeFlight into this
@@ -27,6 +30,10 @@ if (!pageJudgeApi || typeof pageJudgeApi.createPageJudgeFlight !== 'function') {
   throw new Error('AdgatePageJudgeFlight missing after importScripts(page-judge-flight.js)');
 }
 const pageJudgeFlight = pageJudgeApi.createPageJudgeFlight(pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS);
+const serviceLink = self.AdgateServiceLink;
+if (!serviceLink || typeof serviceLink.buildPageJudgeRequest !== 'function') {
+  throw new Error('AdgateServiceLink missing after importScripts(service-link.js)');
+}
 const logBuffer = [];
 let sessionId = null;
 
@@ -48,44 +55,40 @@ async function ensureSession() {
   return sessionId;
 }
 
-async function shipEntries(serverUrl, sid, entries, client) {
+async function loadStoredSettings() {
+  const data = await chrome.storage.sync.get(null);
+  const migrated = serviceLink.migrateStoredSettings(data);
+  if (migrated.changed) await chrome.storage.sync.set(migrated.patch);
+  return { ...DEFAULTS, ...data, ...migrated.patch };
+}
+
+async function shipEntries(settings, sid, entries, client) {
   if (!entries?.length) return { shipped: 0 };
-  const base = (serverUrl || DEFAULTS.serverUrl).replace(/\/$/, '');
-  const res = await fetch(`${base}/v1/log`, {
+  const req = serviceLink.buildLogRequest(settings, {
+    sessionId: sid,
+    client,
+    entries,
+  });
+  const res = await fetch(req.url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId: sid, client, entries }),
+    headers: req.headers,
+    body: JSON.stringify(req.body),
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return { shipped: entries.length };
 }
 
-async function flushLogs(serverUrl) {
+async function flushLogs(settings) {
   if (!logBuffer.length) return { shipped: 0 };
   const sid = await ensureSession();
   const entries = logBuffer.splice(0, logBuffer.length);
   try {
-    return await shipEntries(serverUrl, sid, entries, `extension-bg-${VERSION}`);
+    return await shipEntries(settings, sid, entries, `extension-bg-${VERSION}`);
   } catch (e) {
     logBuffer.unshift(...entries);
-    return { shipped: 0, error: String(e.message || e) };
+    return { shipped: 0, error: serviceLink.redactSecret(e.message || e, settings?.apiKey) };
   }
-}
-
-async function migrateUi() {
-  const data = await chrome.storage.sync.get(null);
-  if ((data.uiRev || 0) >= 1) return { ...DEFAULTS, ...data };
-  const next = {
-    ...DEFAULTS,
-    ...data,
-    showLabels: false,
-    showPanel: false,
-    reviewMode: true,
-    uiRev: 1,
-  };
-  await chrome.storage.sync.set(next);
-  return next;
 }
 
 async function syncBlockRules(blockEnabled) {
@@ -152,7 +155,7 @@ async function openReview() {
 }
 
 pushLog('info', 'bg_start', { version: VERSION, pageJudgeTimeoutMs: pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS });
-migrateUi()
+loadStoredSettings()
   .then((settings) => applyRuntimeSettings(settings))
   .catch((e) => pushLog('warn', 'boot_settings_fail', { error: String(e.message || e) }));
 
@@ -175,21 +178,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'ADGATE_SHIP_LOGS') {
     (async () => {
-      const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
+      const settings = await loadStoredSettings();
       try {
         const sid = message.sessionId || (await ensureSession());
         sendResponse(
-          await shipEntries(settings.serverUrl, sid, message.entries || [], 'extension-content'),
+          await shipEntries(settings, sid, message.entries || [], 'extension-content'),
         );
       } catch (e) {
-        sendResponse({ shipped: 0, error: String(e.message || e) });
+        sendResponse({ shipped: 0, error: serviceLink.redactSecret(e.message || e, settings.apiKey) });
       }
     })();
     return true;
   }
 
   if (message?.type === 'ADGATE_FLUSH_LOGS') {
-    chrome.storage.sync.get(DEFAULTS).then((s) => flushLogs(s.serverUrl).then(sendResponse));
+    loadStoredSettings().then((s) => flushLogs(s).then(sendResponse));
     return true;
   }
 
@@ -210,27 +213,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ADGATE_PAGE_JUDGE') {
     (async () => {
       const flightHandle = pageJudgeFlight.begin();
-      const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
-      const sid = await ensureSession();
-      const base = settings.serverUrl.replace(/\/$/, '');
-      const body = {
-        page: message.page,
-        elements: message.elements || [],
-        hideMin: message.hideMin ?? settings.hideMin ?? 0.75,
-        sessionId: sid,
-        client: `extension-bg-${VERSION}`,
-      };
-      pushLog('info', 'page_judge_fetch', {
-        url: message.page?.url,
-        n: body.elements.length,
-        sessionId: sid,
-        gen: flightHandle.gen,
-        timeoutMs: pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS,
-      });
       try {
-        const res = await fetch(`${base}/v1/page-judge`, {
+        const settings = await loadStoredSettings();
+        const sid = await ensureSession();
+        const req = serviceLink.buildPageJudgeRequest(settings, {
+          page: message.page,
+          elements: message.elements || [],
+          hideMin: message.hideMin ?? settings.hideMin ?? 0.75,
+          sessionId: sid,
+          client: `extension-bg-${VERSION}`,
+        });
+        const body = req.body;
+        pushLog('info', 'page_judge_fetch', {
+          url: message.page?.url,
+          n: body.elements.length,
+          sessionId: sid,
+          gen: flightHandle.gen,
+          timeoutMs: pageJudgeApi.PAGE_JUDGE_TIMEOUT_MS,
+          model: body.model,
+          hasApiKey: Boolean(req.headers['x-api-key']),
+        });
+        const res = await fetch(req.url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: req.headers,
           body: JSON.stringify(body),
           signal: flightHandle.signal,
         });
@@ -253,21 +258,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ms: data.ms,
           hides: (data.elements || []).filter((e) => e.action === 'hide').length,
         });
-        await flushLogs(settings.serverUrl);
+        await flushLogs(settings);
         sendResponse(data);
       } finally {
         flightHandle.done();
       }
     })().catch(async (err) => {
-      const msg = String(err.message || err);
+      const settings = await loadStoredSettings().catch(() => DEFAULTS);
+      const msg = serviceLink.redactSecret(err.message || err, settings.apiKey);
       const aborted = /abort/i.test(msg) || err?.name === 'AbortError';
       pushLog('error', 'page_judge_fail', {
         error: msg,
         tabUrl,
         aborted,
       });
-      const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
-      await flushLogs(settings.serverUrl);
+      await flushLogs(settings);
       sendResponse({
         error: aborted ? `page_judge_aborted: ${msg}` : msg,
       });
@@ -279,5 +284,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 setInterval(() => {
-  chrome.storage.sync.get(DEFAULTS).then((s) => flushLogs(s.serverUrl));
+  loadStoredSettings().then((s) => flushLogs(s)).catch(() => {});
 }, 5000);
