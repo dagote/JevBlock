@@ -21,7 +21,9 @@ JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
 SERVER_DIR = Path(__file__).resolve().parent
 REVIEW_MIN = 0.45
-SERVER_VERSION = "0.3.1"
+SERVER_VERSION = "0.3.2"
+PAGE_JUDGE_BUDGET_S = float(os.getenv("ADGATE_PAGE_JUDGE_BUDGET_S", "720"))  # 12 min overall
+PAGE_JUDGE_ELEMENT_TIMEOUT_S = float(os.getenv("ADGATE_JEV_ELEMENT_TIMEOUT_S", "90"))
 
 
 def resolve_path(env_value: str | None, default: Path) -> Path:
@@ -823,6 +825,54 @@ def soft_remap_kind(el: PageElement, kind: str, noul: float) -> tuple[str, str |
 	return model_kind, None
 
 
+def element_classify_priority(el: PageElement) -> int:
+	"""Higher score = ask System One sooner (visible ad-like candidates first)."""
+	text = (el.text or "").strip()
+	discover = el.discover or ""
+	score = 0
+	if re.match(r"^advertisements?$", text, re.I):
+		score += 100
+	if (el.nearbyLabel or "").strip().lower() in {"advertisement", "advertisements"}:
+		score += 90
+	if discover in AD_DISCOVERS:
+		score += 80
+	if _matches_ad_host(el):
+		score += 70
+	if el.fixedOrSticky:
+		score += 25
+	if discover in {"external_href", "iframe", "external_asset", "external_script"}:
+		score += 15
+	if el.role and "advert" in (el.role or "").lower():
+		score += 60
+	return score
+
+
+def judgment_without_jev(
+	el: PageElement, site_type: str, hide_min: float, reason: str
+) -> ElementJudgment:
+	"""Budget/skip path: still soft-remap ad signals so HTTP response is honest."""
+	kind, remap = soft_remap_kind(el, "other", 0.0)
+	base_reason = reason
+	noul, reason = apply_element_priors(el, 0.0, site_type, reason)
+	if kind == "ad" and noul < PRIOR_FLOOR and base_reason.endswith("_skipped"):
+		# Ad-like nodes skipped for time still get a reviewable floor, not hide-cheat.
+		noul = max(noul, REVIEW_MIN)
+	parts = [reason]
+	if base_reason not in reason:
+		parts.insert(0, base_reason)
+	if remap:
+		parts.append(remap)
+	action = action_for_noul(noul, hide_min)
+	return ElementJudgment(
+		id=el.id,
+		noul=round(noul, 4),
+		action=action,
+		reason="+".join(dict.fromkeys(parts)),
+		kind=kind,
+		kindModel="other",
+	)
+
+
 class PageInfo(BaseModel):
 	url: str = ""
 	hostname: str = ""
@@ -910,22 +960,24 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		"headings": (req.page.headings or [])[:5],
 	}
 
-	def _jev(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
+	def _jev(state: dict[str, Any], questions: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
 		r = httpx.post(
 			f"{JEV_URL}/v1/systemone",
 			json={"state": state, "model": req.model, "questions": questions},
-			timeout=180.0,
+			timeout=timeout if timeout is not None else PAGE_JUDGE_ELEMENT_TIMEOUT_S,
 		)
 		if r.status_code >= 400:
 			raise RuntimeError(f"jev-local {r.status_code}: {r.text[:500]}")
 		return r.json()
 
 	t0 = time.perf_counter()
+	deadline = t0 + PAGE_JUDGE_BUDGET_S
 
 	site_type = "other"
 	site_probs: dict[str, float] = {}
 	site_conf = 0.0
 	try:
+		site_timeout = min(PAGE_JUDGE_ELEMENT_TIMEOUT_S, max(15.0, deadline - time.perf_counter()))
 		payload1 = _jev(
 			{"task": "Classify the primary type of this web page from state.page.", "page": page_short},
 			{
@@ -938,6 +990,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 					"criteria": SITE_TYPES,
 				}
 			},
+			timeout=site_timeout,
 		)
 		site = (payload1.get("answers") or {}).get("site_type") or {}
 		site_type = str(site.get("choice") or "other")
@@ -983,12 +1036,43 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		site_conf=site_conf,
 	)
 
+	# Score visible ad-like candidates first so a budget cut still remaps ads.
+	elements = sorted(elements, key=element_classify_priority, reverse=True)
+	log_event(
+		"page_judge_order",
+		requestId=request_id,
+		order=[el.id for el in elements],
+		priorities=[element_classify_priority(el) for el in elements],
+	)
+
 	judgments: list[ElementJudgment] = []
 	hide_min = float(req.hideMin)
 	jev_model = None
 	skipped = 0
+	budget_hits = 0
 
 	for el in elements:
+		remaining = deadline - time.perf_counter()
+		if remaining <= 2.0:
+			budget_hits += 1
+			row = judgment_without_jev(el, site_type, hide_min, "s1_budget_skipped")
+			judgments.append(row)
+			log_event(
+				"page_judge_element",
+				requestId=request_id,
+				elementId=el.id,
+				noul=row.noul,
+				action=row.action,
+				reason=row.reason,
+				kind=row.kind,
+				kindModel=row.kindModel,
+				tag=el.tag,
+				src=(el.src or "")[:100],
+				discover=el.discover,
+				budget=True,
+			)
+			continue
+
 		noul = 0.0
 		reason = "s1_ad_or_unrelated"
 		kind = "other"
@@ -1033,6 +1117,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 						},
 						f"{el.id}__kind": build_kind_question(el.id),
 					},
+					timeout=min(PAGE_JUDGE_ELEMENT_TIMEOUT_S, max(10.0, remaining - 1.0)),
 				)
 				jev_model = payload.get("model") or jev_model
 				answers = payload.get("answers") or {}
@@ -1068,14 +1153,21 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 					error=msg[:240],
 					reason=reason,
 				)
+				# Still soft-remap so Advertisement/ad.com are not left as other.
+				kind, remap = soft_remap_kind(el, "other", 0.0)
+				kind_model = "other"
 				noul = 0.0
-				kind = "other"
-				kind_model = None
+				if remap:
+					reason = f"{reason}+{remap}"
 
 		noul, reason = apply_element_priors(el, noul, site_type, reason)
 		if reason == "aria_ad" and kind == "other":
 			kind = "ad"
 			kind_model = kind_model or "other"
+		if kind == "other":
+			kind, remap = soft_remap_kind(el, kind, noul)
+			if remap:
+				kind_model = kind_model or "other"
 
 		action = action_for_noul(noul, hide_min)
 
@@ -1115,6 +1207,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 		reviews=sum(1 for j in judgments if j.action == "review"),
 		allows=sum(1 for j in judgments if j.action == "allow"),
 		skipped=skipped,
+		budget_hits=budget_hits,
 	)
 
 	return PageJudgeResponse(

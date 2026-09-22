@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.2 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.3 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -18,7 +18,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.2';
+const CLIENT = 'extension-0.1.3';
 
 let suppressMutations = false;
 
@@ -874,35 +874,42 @@ async function runJudge(trigger) {
   return { ok: true, ...run };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === 'ADGATE_SCAN') {
-    runJudge('manual')
-      .then(sendResponse)
-      .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
-    return true;
-  }
-});
-
 let busy = false;
 let queued = false;
+let lastJudgeResult = null;
+
 async function safeJudge(trigger) {
   if (busy) {
     queued = true;
-    return;
+    log('info', 'judge_coalesce', { trigger });
+    return lastJudgeResult;
   }
   busy = true;
   try {
-    await runJudge(trigger);
+    lastJudgeResult = await runJudge(trigger);
+    return lastJudgeResult;
   } catch (e) {
     log('error', 'safe_judge_fail', { error: String(e.message || e), trigger });
+    lastJudgeResult = { ok: false, error: String(e.message || e) };
+    return lastJudgeResult;
   } finally {
     busy = false;
     if (queued) {
       queued = false;
-      setTimeout(() => safeJudge('queued'), 600);
+      // One follow-up only — do not stack boot/mutation storms while CPU JEV is slow.
+      setTimeout(() => safeJudge('queued'), 1500);
     }
   }
 }
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'ADGATE_SCAN') {
+    safeJudge('manual')
+      .then((result) => sendResponse(result || { ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+});
 
 function watchLateInject(settings) {
   if (settings.blockEnabled !== true || window.__adgateMo) return;
@@ -938,7 +945,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.2-classify',
+    mode: '0.1.3-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
@@ -946,10 +953,11 @@ loadSettings().then((s) => {
   });
   if (s.enabled === false) return;
   watchLateInject(s);
-  setTimeout(() => safeJudge('boot'), 1000);
-  setTimeout(() => safeJudge('boot2'), 4000);
+  // Classify path: a single boot judge. Extra boots only when Block is on
+  // (late injects); overlapping judges are coalesced via safeJudge + bg single-flight.
+  setTimeout(() => safeJudge('boot'), 1200);
   if (s.blockEnabled === true) {
-    setTimeout(() => safeJudge('boot3'), 8000);
-    setTimeout(() => safeJudge('boot4'), 14000);
+    setTimeout(() => safeJudge('boot2'), 10000);
+    setTimeout(() => safeJudge('boot3'), 22000);
   }
 });

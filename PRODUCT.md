@@ -1,4 +1,4 @@
-# Adgate 0.1.2 — System One page classify + user ranks
+# Adgate 0.1.3 — System One page classify + user ranks
 
 ## Idea
 
@@ -20,6 +20,8 @@ elements { id, tag, role, text, nearbyLabel, href, src, hrefHost, srcHost, disco
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
+  client: 15‑min timeout, single-flight (abort overlapping judges)
+  server: ad-like candidates first; noul+kind per element; 12‑min budget
         │
         ├─ site_type choice
         └─ per element: noul + kind choice (clear ad vs nav_chrome instructions)
@@ -28,6 +30,7 @@ POST /v1/page-judge  (adgate → jev-local)
 optional soft_remap_kind (classification only): if model dumps ad slots into nav_chrome
         but Advertisement / ad discover / ad host signals are present → kind=ad
         (kindModel keeps the raw model choice; does not force-hide)
+        Budget skips still soft-remap so the HTTP response is complete.
         │
         ▼
 client ranks: hide if kind enabled and noul ≥ that class hideMin
@@ -65,4 +68,4 @@ Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host 
 
 ## Versions
 
-Extension **0.1.2**. Server **0.3.1**. Kind choice instructions distinguish ad vs nav_chrome; element blobs include discover/hosts/hints. Soft remap is classification-only (logs `kindModel`). Candidate discovery feeds JEV even when force-hide cheats are off; a judge timeout still records collected candidates (`reason: judge_error`).
+Extension **0.1.3**. Server **0.3.2**. Client page-judge timeout 15 minutes + single-flight; server scores ad-like first and finishes within budget with remapped kinds. Soft remap is classification-only (logs `kindModel`). Force-hide cheats stay off.

@@ -45,7 +45,7 @@ class DecisionLogTests(unittest.TestCase):
 		self.assertEqual(row.kindModel, "nav_chrome")
 		plain = app.ElementJudgment(id="e1", noul=0.1, action="allow")
 		self.assertEqual(plain.kind, "other")
-		self.assertEqual(app.SERVER_VERSION, "0.3.1")
+		self.assertEqual(app.SERVER_VERSION, "0.3.2")
 
 	def test_kind_question_payload_has_clear_option_instructions(self) -> None:
 		"""Hermetic: kind choice sent to System One includes improved criteria + instructions."""
@@ -125,6 +125,24 @@ class DecisionLogTests(unittest.TestCase):
 		kind, reason = app.soft_remap_kind(ad_label, "ad", 0.9)
 		self.assertEqual(kind, "ad")
 		self.assertIsNone(reason)
+
+	def test_classify_priority_scores_ad_like_first(self) -> None:
+		ad = app.PageElement(id="a", text="Advertisement", discover="ad_label")
+		nav = app.PageElement(id="n", tag="nav", text="Home", discover="")
+		link = app.PageElement(id="l", href="https://ad.com/x", discover="ad_host_href", text="Buy")
+		self.assertGreater(app.element_classify_priority(ad), app.element_classify_priority(nav))
+		self.assertGreater(app.element_classify_priority(link), app.element_classify_priority(nav))
+		ordered = sorted([nav, ad, link], key=app.element_classify_priority, reverse=True)
+		self.assertEqual([el.id for el in ordered][0], "a")
+
+	def test_budget_skip_still_remaps_ad_kind(self) -> None:
+		"""Honesty: budget/skip path returns remapped kind=ad in the judgment object."""
+		el = app.PageElement(id="e", text="Advertisement", discover="ad_label")
+		row = app.judgment_without_jev(el, "marketing", 0.75, "s1_budget_skipped")
+		self.assertEqual(row.kind, "ad")
+		self.assertEqual(row.kindModel, "other")
+		self.assertIn("budget", row.reason)
+		self.assertIn("soft_remap", row.reason)
 
 	def test_review_band(self) -> None:
 		self.assertEqual(app.action_for_noul(0.75, 0.75), "hide")

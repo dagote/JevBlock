@@ -1,4 +1,6 @@
-/** Adgate 0.1.2 — service worker (only place that fetch()es LAN HTTP). */
+/** Adgate 0.1.3 — service worker (only place that fetch()es LAN HTTP). */
+
+importScripts('page-judge-flight.js');
 
 const DEFAULTS = {
   enabled: true,
@@ -14,9 +16,11 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';
+const { PAGE_JUDGE_TIMEOUT_MS, createPageJudgeFlight } = self.AdgatePageJudgeFlight;
+const pageJudgeFlight = createPageJudgeFlight(PAGE_JUDGE_TIMEOUT_MS);
 const logBuffer = [];
 let sessionId = null;
 
@@ -141,7 +145,7 @@ async function openReview() {
   return { ok: true, created: true };
 }
 
-pushLog('info', 'bg_start', { version: VERSION });
+pushLog('info', 'bg_start', { version: VERSION, pageJudgeTimeoutMs: PAGE_JUDGE_TIMEOUT_MS });
 migrateUi()
   .then((settings) => applyRuntimeSettings(settings))
   .catch((e) => pushLog('warn', 'boot_settings_fail', { error: String(e.message || e) }));
@@ -199,6 +203,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'ADGATE_PAGE_JUDGE') {
     (async () => {
+      const flightHandle = pageJudgeFlight.begin();
       const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
       const sid = await ensureSession();
       const base = settings.serverUrl.replace(/\/$/, '');
@@ -213,34 +218,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         url: message.page?.url,
         n: body.elements.length,
         sessionId: sid,
+        gen: flightHandle.gen,
+        timeoutMs: PAGE_JUDGE_TIMEOUT_MS,
       });
-      const res = await fetch(`${base}/v1/page-judge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(180000),
-      });
-      const text = await res.text();
-      let data;
       try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(text || `HTTP ${res.status}`);
+        const res = await fetch(`${base}/v1/page-judge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: flightHandle.signal,
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+        if (!flightHandle.isCurrent()) {
+          pushLog('info', 'page_judge_superseded', { gen: flightHandle.gen, requestId: data.requestId });
+          sendResponse({ error: 'page_judge_superseded' });
+          return;
+        }
+        pushLog('info', 'page_judge_ok', {
+          requestId: data.requestId,
+          site_type: data.site_type,
+          ms: data.ms,
+          hides: (data.elements || []).filter((e) => e.action === 'hide').length,
+        });
+        await flushLogs(settings.serverUrl);
+        sendResponse(data);
+      } finally {
+        flightHandle.done();
       }
-      if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
-      pushLog('info', 'page_judge_ok', {
-        requestId: data.requestId,
-        site_type: data.site_type,
-        ms: data.ms,
-        hides: (data.elements || []).filter((e) => e.action === 'hide').length,
-      });
-      await flushLogs(settings.serverUrl);
-      sendResponse(data);
     })().catch(async (err) => {
-      pushLog('error', 'page_judge_fail', { error: String(err.message || err), tabUrl });
+      const msg = String(err.message || err);
+      const aborted = /abort/i.test(msg) || err?.name === 'AbortError';
+      pushLog('error', 'page_judge_fail', {
+        error: msg,
+        tabUrl,
+        aborted,
+      });
       const settings = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
       await flushLogs(settings.serverUrl);
-      sendResponse({ error: String(err.message || err) });
+      sendResponse({
+        error: aborted ? `page_judge_aborted: ${msg}` : msg,
+      });
     });
     return true;
   }

@@ -11,7 +11,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
   ranks: null,
 };
-const NEED = '0.1.2';
+const NEED = '0.1.3';
 const RANK_KEYS = ['ad', 'promo', 'unrelated_inject', 'donate_ask', 'tracking_chrome'];
 const $ = (id) => document.getElementById(id);
 
