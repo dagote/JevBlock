@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.8 — page judge, block path, review log.
+ * Adgate 0.0.9 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.8';
+const CLIENT = 'extension-0.0.9';
 
 let suppressMutations = false;
 
@@ -230,6 +230,49 @@ function removeClbContainers(doc) {
       noul: 1,
       action: 'hide',
       reason: 'force_hide_clb_container',
+      removed: outcome.removed,
+      cascadeParents: outcome.cascade,
+      before: outcome.before,
+    });
+  });
+  return rows;
+}
+
+const AD_COM_HREF_RE = /^(?:https?:\/\/)?ad\.com\/?$/i;
+
+/** Issue #3: Extreme Test direct-link ads. Hide the ad.com anchor only; leave help copy. */
+function findAdComLinks(doc) {
+  const root = typeof doc.querySelectorAll === 'function' ? doc : doc.documentElement || doc.body;
+  if (!root || !root.querySelectorAll) return [];
+  const hits = [];
+  root.querySelectorAll('a[href]').forEach((el) => {
+    if (AD_COM_HREF_RE.test((el.getAttribute('href') || '').trim())) hits.push(el);
+  });
+  return hits;
+}
+
+function removeAdComLinks(doc) {
+  const rows = [];
+  findAdComLinks(doc).forEach((el, i) => {
+    if (!el.isConnected) return;
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    const href = el.getAttribute('href');
+    const outcome = hideEl(el, 1, true);
+    rows.push({
+      id: `a${i}`,
+      tag: 'a',
+      src: null,
+      href: href || null,
+      classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
+      idAttr: el.id || null,
+      role: el.getAttribute('role'),
+      rect: null,
+      text,
+      fixedOrSticky: false,
+      discover: 'force_hide_ad_com_link',
+      noul: 1,
+      action: 'hide',
+      reason: 'force_hide_ad_com_link',
       removed: outcome.removed,
       cascadeParents: outcome.cascade,
       before: outcome.before,
@@ -453,6 +496,7 @@ async function runJudge(trigger) {
   if (blockEnabled) {
     decisionRows.push(...removeAdvertisementWidgets(document));
     decisionRows.push(...removeClbContainers(document));
+    decisionRows.push(...removeAdComLinks(document));
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
@@ -675,7 +719,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.8-review',
+    mode: '0.0.9-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,
