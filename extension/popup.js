@@ -7,7 +7,8 @@ const DEFAULTS = {
   showPanel: false,
   extremeEarly: false,
   uiRev: 1,
-  serverUrl: 'http://192.168.0.119:8770',
+  serverUrl: 'https://www.dagote.ai/api/jev',
+  apiKey: '',
 };
 const NEED = '0.0.4';
 const $ = (id) => document.getElementById(id);
@@ -56,6 +57,7 @@ async function load() {
   $('extremeEarly').checked = data.extremeEarly === true;
   $('hideMin').value = data.hideMin ?? 0.75;
   $('serverUrl').value = data.serverUrl || DEFAULTS.serverUrl;
+  if ($('apiKey')) $('apiKey').value = data.apiKey || '';
   render((await chrome.storage.local.get(['adgateLastRun'])).adgateLastRun);
 }
 
@@ -69,6 +71,7 @@ function readSettings() {
     extremeEarly: $('extremeEarly').checked,
     hideMin: Number($('hideMin').value) || 0.75,
     serverUrl: $('serverUrl').value.trim().replace(/\/$/, ''),
+    apiKey: $('apiKey') ? $('apiKey').value.trim() : '',
     uiRev: 1,
   };
 }

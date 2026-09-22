@@ -10,7 +10,9 @@ const DEFAULTS = {
   extremeEarly: false,
   uiRev: 1,
   maxElements: 16,
-  serverUrl: 'http://192.168.0.119:8770',
+  // Public dagote proxy (same style as /api/stream-local for llama).
+  // LAN adgate still works: http://192.168.0.119:8770
+  serverUrl: 'https://www.dagote.ai/api/jev',
 };
 
 const VERSION = '0.0.4';
@@ -40,6 +42,10 @@ async function ensureSession() {
 async function shipEntries(serverUrl, sid, entries, client) {
   if (!entries?.length) return { shipped: 0 };
   const base = (serverUrl || DEFAULTS.serverUrl).replace(/\/$/, '');
+  // Logging only works against adgate host (not the public /api/jev proxy).
+  if (base.includes('/api/jev')) {
+    return { shipped: 0, skipped: 'public_jev_proxy' };
+  }
   const res = await fetch(`${base}/v1/log`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -213,11 +219,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         n: body.elements.length,
         sessionId: sid,
       });
-      const res = await fetch(`${base}/v1/page-judge`, {
+      // Accept either https://www.dagote.ai/api/jev or http://host:8770
+      const judgeUrl = base.includes('/api/jev')
+        ? `${base}/v1/page-judge`
+        : `${base}/v1/page-judge`;
+      const headers = { 'Content-Type': 'application/json' };
+      // Optional visitor key (same x-api-key as /api/stream-local)
+      const stored = await chrome.storage.sync.get({ apiKey: '' });
+      if (stored.apiKey) headers['x-api-key'] = String(stored.apiKey);
+
+      const res = await fetch(judgeUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(300000),
       });
       const text = await res.text();
       let data;

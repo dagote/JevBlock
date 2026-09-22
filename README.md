@@ -35,6 +35,20 @@ Empty-parent collapse stops at `html`, `body`, `main`, `header`, `nav`, and `foo
 | `PRODUCT.md` | Product / decision model notes |
 | `INSTALL.md` | Install / stale-build notes |
 
+## Public API (via dagote)
+
+Same outside-call style as local Llama (`/api/stream-local`):
+
+| Endpoint | Upstream |
+|----------|----------|
+| `GET https://www.dagote.ai/api/jev/health` | jev-local + adgate health |
+| `POST https://www.dagote.ai/api/jev/v1/systemone` | jev-local |
+| `POST https://www.dagote.ai/api/jev/v1/page-judge` | adgate |
+
+Auth: optional `x-api-key` (Hub visitor key). Guests use IP GPU quota.
+
+Docs page: https://www.dagote.ai/docs/jev-api
+
 ## Quick start
 
 ### 1. jev-local (System One scorer)

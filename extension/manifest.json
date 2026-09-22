@@ -10,6 +10,8 @@
     "declarativeNetRequest"
   ],
   "host_permissions": [
+    "https://www.dagote.ai/*",
+    "https://dagote.ai/*",
     "http://192.168.0.119:8770/*",
     "http://127.0.0.1:8770/*",
     "http://localhost:8770/*",
