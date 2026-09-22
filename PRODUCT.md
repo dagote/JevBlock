@@ -92,7 +92,14 @@ Rank policy when `kind` is missing and (`action` is `hide` or `noul` ≥ hideMin
 
 If the host does send `kind`, that value is used and `kind_missing_host` is not applied.
 
-Live jev-tiny on an AOL mail page does not meet the text pass bar. A promoted GAM `src` scores hide (noul ≥ 0.75). Capital One–style ad text, an empty presentation spacer, and a real inbox row do not hold allow/hide thresholds, and the text scores move between calls. See `docs/contract-matrix.md`. Returning `kind` is the smallest host change that makes ranks reliable.
+Live jev-tiny does **not** pass on noul alone. See `docs/contract-matrix.md`.
+
+- `servedby.doubleclick.net` scores about **0.90 hide**. Promoting that src is enough.
+- `gpt.mail.aol.com/f/gam/gptIframe` scores about **0.27 allow**. The host’s ad-host prior does not see a first-party mail GAM host. The client sends `discover: ad_host_asset` and hint `first-party mail GAM iframe`, then applies **`prior_mail_gam`** when noul is below the ad rank. The stored noul stays the host value. This is a prior, not an Extreme force-hide cheat.
+- A `data_ad_row` with a weak noul gets **`prior_data_ad_row`** the same way.
+- Capital One–style ad text stays about **0.62–0.68 review** even with `discover: ad_label` and an Advertisement label. There is no client prior for that copy. Field tweaks do not make it a hide. Passing it needs the host to return `kind` (or a real text prior on the API).
+- Empty spacers are noisy (about 0.44 allow, 0.56 review, or 0.82 hide). Do not trust noul alone. The selector does not send them.
+- `kind` is still always null. `kind_missing_host` only labels that gap. It does not invent a host class.
 
 ### Call budget
 

@@ -1,30 +1,32 @@
 # jev-tiny mail contract matrix
 
-Live `POST https://www.dagote.ai/api/jev/v1/page-judge`, model `jev-tiny`, AOL mail page context. No API key was in the environment. The host accepted the call and set `authenticated` to false. Full request and response: [`contract-matrix.json`](contract-matrix.json). Request id `09f57797d4df`.
+Hosted `POST https://www.dagote.ai/api/jev/v1/page-judge`, model `jev-tiny`. `kind` is always null. Full earlier request/response: [`contract-matrix.json`](contract-matrix.json) (request `09f57797d4df`).
 
-The selector does **not** send the spacer or the inbox row (empty presentation chrome and primary mail chrome are excluded). They are in this request only to measure the host. `capone` and `gam` are the slim blobs `serializeCandidate` + `toJudgeElement` emit (child GAM iframe `src` promoted, hosts set, no HTML dump).
+## Owner ablation (this session)
 
-## Result
+These are the numbers to trust. Field tweaks were already tried.
 
-| Case | Pass bar | Host result | Pass |
-|------|----------|-------------|------|
-| Capital One ad text (`capone`) | action hide or noul ≥ 0.75 | noul **0.4378**, action **allow** | no |
-| GAM promoted src (`gam`) | action hide or noul ≥ 0.75 | noul **0.9948**, action **hide** | yes |
-| Empty presentation spacer (`spacer`) | action allow or noul < 0.45 | noul **0.6225**, action **review** | no |
-| Real inbox row (`inbox`) | action allow or noul < 0.45 | noul **0.8176**, action **hide** | no |
+| Case | Host noul | Action | What it means |
+|------|-----------|--------|----------------|
+| Capital One ad text, including `discover=ad_label` or text `Advertisement` plus a nearby promo | ~0.62–0.68 | review | Copy never reaches hide. Field tweaks do not fix it. |
+| iframe `src=https://servedby.doubleclick.net/ad` | 0.90 | hide | Ad-host signal works once the src is a known ad network. |
+| iframe `src=https://gpt.mail.aol.com/f/gam/gptIframe…` | 0.27 | allow | First-party AOL GAM host is invisible to the host priors. |
+| Empty spacer | noisy | 0.82 hide earlier; sticky 0.44 allow; non-sticky 0.56 review | Do not trust noul alone. |
 
-Each element came back as `{id, noul, action, reason}`. **`kind` was omitted.**
+A follow-up call with the slim blob (`discover: ad_host_asset`, hint `first-party mail GAM iframe`, `srcHost: gpt.mail.aol.com`) still returned noul **0.3775 allow** and `kind: null`. The client decision on that row is hide via `prior_mail_gam`, with the host noul left at 0.3775.
 
-## The host cannot meet the bar on noul alone
+## Pass bar on pure JEV noul
 
-Promoted GAM `src` + `srcHost` + `discover: data_ad_row` is stable: several calls in this session scored it hide at noul 0.92–0.99.
+**Fail.** Promoting src is necessary and is enough for `doubleclick.net`. It is not enough for Capital One text or for `gpt.mail.aol.com`.
 
-Text is not. The same Capital One blob also scored **0.6792 review** earlier in the session, and an inbox row scored **0.5622 review**. An empty `role=presentation` box scored anywhere from **0.50 review** to **0.85 hide** depending on hint text. Adding “not an advertisement” hints made the spacer look more like an ad, not less. jev-tiny’s noul on mail text does not separate a sponsored line from a message, and it does not stay under 0.45 for a blank spacer.
+The client does not rewrite Capital One’s noul and does not add a prior for ad-label copy. That case needs the host to return `kind`, or a text prior inside page-judge. Until then it stays in the review band.
 
-This is not a client pass. The extension does not rewrite those scores.
+## What the client does instead
+
+`gpt.mail.aol.com`, `/f/gam/`, and `gptIframe` are collected as `discover: ad_host_asset` with hint `first-party mail GAM iframe`. When the host noul is below the ad rank (the 0.27 case), Block applies **`prior_mail_gam`**. A `data_ad_row` with a weak noul gets **`prior_data_ad_row`**. The review row still shows the host noul and `kind_missing_host`. These are priors, not Extreme `force_hide_*` cheats. Turning the ad rank off turns the prior off.
+
+Empty spacers are not candidates. A noisy 0.82 must not delete them, and a noisy 0.44 must not be treated as proof they are safe to score.
 
 ## Smallest API change
 
-Return `kind` on each element (`ad`, `main_content`, `nav_chrome`, `other`, …), the way the LAN Adgate server already does. Ranks already key off kind. With kind present, a high noul on a mail row stays `main_content` and is not removed, and an ad with a middling noul can still be ranked as `ad` only when its rank says so.
-
-Until that field exists, the client policy is explicit and labeled: missing kind and (host action `hide` or noul ≥ hideMin) uses the **ad** rank for the hide decision only, and the review row says `kind_missing_host`. The selector keeps empty spacers and inbox chrome out of the request so a flaky high noul cannot delete them.
+Return `kind` on each element. The LAN Adgate server already does, and it can floor `gpt.mail.aol.com` as `s1_plus_mail_gam_prior`. Hosted jev-tiny noul alone cannot pass Capital One or first-party AOL GAM.

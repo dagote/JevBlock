@@ -43,6 +43,7 @@
       kind: row.kind || 'other',
       kindPolicy: row.kindPolicy || null,
       hostKind: row.hostKind == null || row.hostKind === '' ? null : row.hostKind,
+      prior: row.prior || null,
       action: row.action,
       reason: row.reason || '',
       removed: !!row.removed,

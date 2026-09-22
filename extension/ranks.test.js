@@ -79,3 +79,33 @@ test('ranks: missing host kind uses the ad rank and labels kind_missing_host', (
   assert.equal(hosted.kindLabel, null);
   assert.equal(hosted.hostKind, 'ad');
 });
+
+test('ranks: mail GAM and data-ad priors hide a weak noul without faking host kind', () => {
+  const settings = { hideMin: 0.75, ranks: normalizeRanks(DEFAULT_RANKS) };
+  const gam = decideHide(settings, { noul: 0.27, action: 'allow', slotPrior: 'mail_gam' });
+  assert.equal(gam.hide, true);
+  assert.equal(gam.action, 'hide');
+  assert.equal(gam.reason, 'prior_mail_gam');
+  assert.equal(gam.prior, 'prior_mail_gam');
+  assert.equal(gam.kindLabel, 'kind_missing_host');
+  assert.equal(gam.hostKind, null);
+
+  const row = decideHide(settings, { noul: 0.44, action: 'allow', slotPrior: 'data_ad_row' });
+  assert.equal(row.hide, true);
+  assert.equal(row.reason, 'prior_data_ad_row');
+
+  const strong = decideHide(settings, { noul: 0.9, action: 'hide', slotPrior: 'mail_gam' });
+  assert.equal(strong.reason, 'kind_missing_host');
+  assert.equal(strong.prior, undefined);
+
+  const copy = decideHide(settings, { noul: 0.65, action: 'review', slotPrior: '' });
+  assert.equal(copy.hide, false);
+  assert.equal(copy.action, 'review');
+  assert.equal(copy.prior, undefined);
+
+  const off = {
+    hideMin: 0.75,
+    ranks: normalizeRanks({ ad: { enabled: false, hideMin: 0.75 } }),
+  };
+  assert.equal(decideHide(off, { noul: 0.27, action: 'allow', slotPrior: 'mail_gam' }).hide, false);
+});

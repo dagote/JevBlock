@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Adgate",
   "version": "0.1.8",
-  "description": "0.1.8 — Slim judge fields, precise candidates, missing-kind rank policy",
+  "description": "0.1.8 — Slim judge fields, mail GAM prior, missing-kind label",
   "permissions": [
     "storage",
     "activeTab",

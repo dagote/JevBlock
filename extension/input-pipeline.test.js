@@ -8,6 +8,7 @@ const {
   serializeCandidate,
   toJudgeElement,
   promoteAssets,
+  slotPriorName,
   createRepeatGuard,
   judgeFingerprint,
   CANDIDATE_CAP,
@@ -111,6 +112,35 @@ test('selector keeps GAM and ad text, drops spacers and mail chrome', () => {
       key,
     );
   }
+});
+
+test('first-party AOL GAM iframe is an ad-host asset with a mail prior', () => {
+  const { document } = parseHTML(
+    '<!doctype html><html><body><iframe id="aol" src="https://gpt.mail.aol.com/f/gam/gptIframe?sz=300x250"></iframe></body></html>',
+  );
+  const rows = collectCandidates(document, { max: 24, hostname: 'mail.aol.com' }).map((item, index) =>
+    serializeCandidate(item, `e${index}`),
+  );
+  const aol = rows.find((row) => (row.src || '').includes('gpt.mail.aol.com/f/gam/gptIframe'));
+  assert.ok(aol, rows.map((row) => row.src).join(','));
+  assert.equal(aol.discover, 'ad_host_asset');
+  assert.equal(aol.srcHost, 'gpt.mail.aol.com');
+  assert.match(aol.hint, /first-party mail GAM iframe/);
+  assert.equal(slotPriorName(aol), 'mail_gam');
+  const wire = toJudgeElement(aol);
+  assert.equal(wire.discover, 'ad_host_asset');
+  assert.match(wire.hint, /first-party mail GAM/);
+  assert.equal(Object.hasOwn(wire, 'outerHTML'), false);
+
+  const { document: capDoc } = parseHTML(
+    '<!doctype html><html><body><span>Advertisement</span><a id="cap" href="https://www.capitalone.com/credit-cards/bonus">Capital One | $200 cash bonus</a></body></html>',
+  );
+  const capRows = collectCandidates(capDoc, { max: 24, hostname: 'mail.aol.com' }).map((item, i) =>
+    serializeCandidate(item, `c${i}`),
+  );
+  const cap = capRows.find((row) => /Capital One/.test(row.text || ''));
+  assert.ok(cap);
+  assert.equal(slotPriorName(cap), '');
 });
 
 test('repeat guard skips boot duplicates and still allows manual', () => {

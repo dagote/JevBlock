@@ -50,10 +50,35 @@
   }
 
   /**
+   * Client prior for a structural mail slot when hosted noul is below the ad bar.
+   * Not an Extreme force-hide cheat, and not a claim that the host scored it high.
+   * Capital One / ad_label text is not a slot prior.
+   */
+  function slotPriorDecision(ranks, globalMin, noul, hostKind, slotPrior) {
+    const slot = String(slotPrior || '');
+    if (slot !== 'mail_gam' && slot !== 'data_ad_row') return null;
+    const ad = ranks.ad;
+    const threshold = Number(ad.hideMin) || globalMin;
+    if (!(noul < threshold) || !ad.enabled) return null;
+    const reason = slot === 'mail_gam' ? 'prior_mail_gam' : 'prior_data_ad_row';
+    return {
+      hide: true,
+      action: 'hide',
+      reason,
+      kind: 'ad',
+      kindPolicy: 'ad',
+      kindLabel: hostKind ? null : 'kind_missing_host',
+      hostKind: hostKind || null,
+      prior: reason,
+    };
+  }
+
+  /**
    * Decide whether Block should remove this judgment.
    * Hosted page-judge often omits kind. Missing kind plus host action hide,
    * or noul at/above hideMin, is scored with the ad rank only. The review
    * label is kind_missing_host — the host did not return kind.
+   * judgment.slotPrior (mail_gam | data_ad_row) is a client prior when noul is weak.
    */
   function decideHide(settings, judgment) {
     const ranks = normalizeRanks(settings && settings.ranks);
@@ -62,6 +87,8 @@
     const hostKind = hostKindOf(judgment);
     const hostAction = String((judgment && judgment.action) || '').toLowerCase();
     const reviewFloor = Math.min(0.45, globalMin);
+    const prior = slotPriorDecision(ranks, globalMin, noul, hostKind, judgment && judgment.slotPrior);
+    if (prior) return prior;
 
     if (!hostKind && (hostAction === 'hide' || noul >= globalMin)) {
       const ad = ranks.ad;

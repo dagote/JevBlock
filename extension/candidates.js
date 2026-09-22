@@ -49,6 +49,8 @@
   const REPEAT_GUARD_MS = 30000;
   const GAM_RE =
     /gampad|googletagservices|gpt\/pubads|gpt\.js|securepubads|doubleclick|googlesyndication|safeframe|pagead2|googleads\.g\.|adservice\.google|\/mail-us\//i;
+  /** First-party mail GAM. Hosted jev-tiny scores these ~0.27 because they are not doubleclick. */
+  const MAIL_GAM_RE = /gpt\.mail\.aol\.com|gpt\.mail\.yahoo\.com|\/f\/gam\/|gptIframe|\/mail-us\//i;
   const ADISH_TEXT_RE = /\bsponsored\b|\bpromotion\b|special offer|limited[- ]time/i;
   const MAIL_CHROME_SELECTOR = [
     '[data-test-id="toolbar"]',
@@ -467,7 +469,13 @@
   function refineDiscover(el, discover, src, href) {
     const current = discover || '';
     const dataAd = elementHasDataAdAttr(el);
-    const network = GAM_RE.test(src || '') || GAM_RE.test(href || '') || AD_HOST_RE.test(src || '') || AD_HOST_RE.test(href || '');
+    const network =
+      GAM_RE.test(src || '') ||
+      GAM_RE.test(href || '') ||
+      MAIL_GAM_RE.test(src || '') ||
+      MAIL_GAM_RE.test(href || '') ||
+      AD_HOST_RE.test(src || '') ||
+      AD_HOST_RE.test(href || '');
     const tag = String((el && el.tagName) || '').toLowerCase();
     const promotedFrame = !!(src && el && el.querySelector && el.querySelector('iframe[src]') && tag !== 'iframe');
     if (current === 'gpt_slot' || (dataAd && !PRESERVE_DISCOVER.has(current))) return 'data_ad_row';
@@ -485,7 +493,8 @@
     const nearby = fields.nearbyLabel || '';
     const parts = [];
     if (discover === 'data_ad_row') parts.push('data-ad row');
-    if (discover === 'ad_host_asset' || GAM_RE.test(src) || GAM_RE.test(href) || AD_HOST_RE.test(src) || AD_HOST_RE.test(href)) {
+    if (MAIL_GAM_RE.test(src) || MAIL_GAM_RE.test(href)) parts.push('first-party mail GAM iframe');
+    else if (discover === 'ad_host_asset' || GAM_RE.test(src) || GAM_RE.test(href) || AD_HOST_RE.test(src) || AD_HOST_RE.test(href)) {
       parts.push('ad-network asset');
     }
     if (discover === 'iframe') parts.push('iframe');
@@ -517,6 +526,19 @@
     if (src.discover) out.discover = src.discover;
     if (src.hint) out.hint = String(src.hint).slice(0, JUDGE_HINT_MAX);
     return out;
+  }
+
+  /**
+   * Structural slot the client may prior when hosted noul is weak.
+   * mail_gam: gpt.mail.aol.com /f/gam/ gptIframe. data_ad_row: data-ad* without that host.
+   * Ad-label text (Capital One) is not a prior — jev-tiny stays in review on that copy.
+   */
+  function slotPriorName(row) {
+    if (!row) return '';
+    const blob = `${row.src || ''} ${row.href || ''} ${row.srcHost || ''} ${row.hrefHost || ''}`;
+    if (MAIL_GAM_RE.test(blob)) return 'mail_gam';
+    if ((row.discover || '') === 'data_ad_row') return 'data_ad_row';
+    return '';
   }
 
   function judgeFingerprint(page, elements) {
@@ -572,7 +594,8 @@
           discover === 'fixed_overlay' ||
           elementHasDataAdAttr(el) ||
           AD_HOST_RE.test(url) ||
-          GAM_RE.test(url);
+          GAM_RE.test(url) ||
+          MAIL_GAM_RE.test(url);
         if (!strong) return;
       }
       const prev = found.get(el);
@@ -607,7 +630,7 @@
       scope.querySelectorAll('script[src], iframe, ins, object, embed, img[src]').forEach((el) => {
         const tag = el.tagName.toLowerCase();
         const url = el.getAttribute('src') || el.getAttribute('data') || '';
-        const hostish = AD_HOST_RE.test(url) || GAM_RE.test(url);
+        const hostish = AD_HOST_RE.test(url) || GAM_RE.test(url) || MAIL_GAM_RE.test(url);
         const external = isExternalUrl(url, options.hostname);
         if (tag === 'script') {
           if (!hostish && !external) return;
@@ -923,7 +946,10 @@
     let href = promoted.href;
     let src = promoted.src;
     const evidence = meaningfulUrl(item.evidence || '');
-    const evidenceNetwork = !!(evidence && (AD_HOST_RE.test(evidence) || GAM_RE.test(evidence)));
+    const evidenceNetwork = !!(
+      evidence &&
+      (AD_HOST_RE.test(evidence) || GAM_RE.test(evidence) || MAIL_GAM_RE.test(evidence))
+    );
     const preferEvidence =
       item.discover === 'ad_host_script' ||
       item.discover === 'ad_host_href' ||
@@ -978,6 +1004,8 @@
   return {
     AD_HOST_RE,
     GAM_RE,
+    MAIL_GAM_RE,
+    slotPriorName,
     FORCED_HIDE,
     CANDIDATE_CAP,
     REPEAT_GUARD_MS,

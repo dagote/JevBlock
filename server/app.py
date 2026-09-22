@@ -179,6 +179,12 @@ def apply_element_priors(
 	}:
 		return noul, reason
 	src = el.src or ""
+	href = el.href or ""
+	mail_gam = bool(re.search(r"gpt\.mail\.aol\.com|gpt\.mail\.yahoo\.com|/f/gam/|gptIframe", f"{src} {href}", re.I))
+	if mail_gam and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_mail_gam_prior"
+	if (el.discover or "") == "data_ad_row" and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, "s1_plus_data_ad_row_prior"
 	if site_type == "mail" and "mail-us" in src and noul < PRIOR_FLOOR:
 		return PRIOR_FLOOR, "s1_plus_mail_us_prior"
 	if _matches_ad_host(el) and noul < PRIOR_FLOOR:

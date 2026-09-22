@@ -746,7 +746,8 @@ async function classifyPicked({
       blockEnabled &&
       settings.forceHideCheats === true &&
       globalThis.AdgateCandidates?.isForcedHide?.(ser);
-    const ranked = globalThis.AdgateRanks?.decideHide(settings, j) || {
+    const slotPrior = globalThis.AdgateCandidates?.slotPriorName?.(ser) || '';
+    const ranked = globalThis.AdgateRanks?.decideHide(settings, { ...j, slotPrior }) || {
       hide: j.action === 'hide',
       action: j.action,
       reason: j.reason,
@@ -796,6 +797,7 @@ async function classifyPicked({
       kind,
       kindPolicy: ranked.kindPolicy || null,
       hostKind: ranked.hostKind === null ? null : hostKind,
+      prior: ranked.prior || null,
       action: !blockEnabled && action === 'hide' ? 'review' : action,
       reason,
       removed,
