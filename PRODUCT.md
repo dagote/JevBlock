@@ -60,4 +60,4 @@ Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host 
 
 ## Versions
 
-Extension **0.1.0**. Server **0.3.0**. Empty-parent collapse and optional DNR remain as plumbing.
+Extension **0.1.1**. Server **0.3.0**. Empty-parent collapse and optional DNR remain as plumbing. Candidate discovery feeds JEV even when force-hide cheats are off; a judge timeout still records collected candidates (`reason: judge_error`).

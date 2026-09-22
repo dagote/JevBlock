@@ -40,6 +40,7 @@
   ]);
   const OVERLAY_RE = /interstitial|special.?offer|click here/i;
   const PUSH_RE = /notification-permission|wants to\b.{0,80}?notifications/i;
+  const EXTERNAL_URL_RE = /^(?:https?:)?\/\/[^\s/?#]+/i;
   const STOP_TAGS = new Set(['html', 'body', 'head', 'main', 'header', 'nav', 'footer']);
   const STOP_ROLES = new Set(['main', 'banner', 'navigation', 'contentinfo']);
 
@@ -52,6 +53,33 @@
 
   function classTokens(el) {
     return classNameOf(el).split(/\s+/).filter(Boolean);
+  }
+
+  function isExternalUrl(url, pageHost) {
+    const raw = (url || '').trim();
+    if (!raw) return false;
+    if (/^(?:https?:\/\/)?ad\.com\/?$/i.test(raw)) return true;
+    if (!EXTERNAL_URL_RE.test(raw) && !/^\/\//.test(raw)) return false;
+    const match = /^(?:https?:)?\/\/([^/?#]+)/i.exec(raw);
+    if (!match) return false;
+    const host = match[1].toLowerCase().replace(/^www\./, '');
+    const page = String(pageHost || '')
+      .toLowerCase()
+      .replace(/^www\./, '');
+    if (page && (host === page || host.endsWith(`.${page}`))) return false;
+    return true;
+  }
+
+  function widgetHasEmbed(el) {
+    if (!el || !el.querySelector) return false;
+    return !!el.querySelector('script[src], iframe, ins, object, embed');
+  }
+
+  function firstEmbedUrl(el) {
+    if (!el || !el.querySelector) return '';
+    const node = el.querySelector('script[src], iframe[src], object[data], embed[src], img[src], a[href]');
+    if (!node) return '';
+    return node.getAttribute('src') || node.getAttribute('data') || node.getAttribute('href') || '';
   }
 
   function isLandmark(el) {
@@ -323,15 +351,17 @@
       scope.querySelectorAll('a[href]').forEach((anchor) => {
         const href = anchor.getAttribute('href') || '';
         if (AD_HOST_RE.test(href)) add(anchor, 'ad_host_href', 970000, href);
+        else if (isExternalUrl(href, options.hostname)) add(anchor, 'external_href', 880000, href);
       });
 
       scope.querySelectorAll('script[src], iframe, ins, object, embed, img[src]').forEach((el) => {
         const tag = el.tagName.toLowerCase();
         const url = el.getAttribute('src') || el.getAttribute('data') || '';
         const hostish = AD_HOST_RE.test(url);
+        const external = isExternalUrl(url, options.hostname);
         if (tag === 'script') {
-          if (!hostish) return;
-          add(slotForAsset(el), 'ad_host_script', 980000, url);
+          if (!hostish && !external) return;
+          add(slotForAsset(el), hostish ? 'ad_host_script' : 'external_script', hostish ? 980000 : 870000, url);
           return;
         }
         if (tag === 'img' && !hostish) return;
@@ -340,8 +370,8 @@
           return;
         }
         if (tag === 'iframe' && !hostish && isJunkFrame(el)) return;
-        let discover = hostish ? 'ad_host_asset' : tag;
-        let pri = hostish ? 960000 : 900000;
+        let discover = hostish ? 'ad_host_asset' : tag === 'iframe' ? 'iframe' : external ? 'external_asset' : tag;
+        let pri = hostish ? 960000 : external ? 890000 : 900000;
         if (tag === 'iframe' && isClb(el)) {
           discover = 'clb_slot';
           pri = 955000;
@@ -361,10 +391,25 @@
           add(slot, vast ? 'vast_player' : 'ad_host_script', vast ? 965000 : 980000, urls[0]);
           return;
         }
-        if (isAdLabelShell(el) || hasAdLabel(el)) add(slot, 'ad_label', 940000, '');
-        else if (isBlankHtmlWidget(el)) add(el, 'blank_html_widget', 720000, '');
-        else if (/\belementor-widget-shortcode\b/.test(classes) && el.querySelector && el.querySelector('.vast_video_loading, .fluid_video_wrapper, video[id^="fp-"]')) {
-          add(slot, 'vast_player', 930000, urls[0] || '');
+        if (isAdLabelShell(el) || hasAdLabel(el)) {
+          add(slot, 'ad_label', 940000, firstEmbedUrl(el));
+          return;
+        }
+        if (widgetHasEmbed(el)) {
+          const embedUrl = firstEmbedUrl(el);
+          const vast =
+            /\belementor-widget-shortcode\b/.test(classes) ||
+            /vastTag|vast_options/i.test(el.textContent || '');
+          add(slot, vast ? 'vast_player' : 'widget_embed', vast ? 930000 : 860000, embedUrl);
+          return;
+        }
+        if (isBlankHtmlWidget(el)) add(el, 'blank_html_widget', 720000, '');
+        else if (
+          /\belementor-widget-shortcode\b/.test(classes) &&
+          el.querySelector &&
+          el.querySelector('.vast_video_loading, .fluid_video_wrapper, video[id^="fp-"]')
+        ) {
+          add(slot, 'vast_player', 930000, '');
         }
       });
 

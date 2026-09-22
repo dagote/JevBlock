@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.0 — JEV classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.1 — JEV classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -18,7 +18,7 @@ const DEFAULTS = {
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.0';
+const CLIENT = 'extension-0.1.1';
 
 let suppressMutations = false;
 
@@ -120,10 +120,11 @@ function snapshotEl(el) {
   return { html, text };
 }
 
-/** Live DOM scan. Zero-size Elementor slots stay; substring class matches do not. */
+/** Live DOM scan. Prefer content boxes for JEV classify; Extreme cheats are separate. */
 function collectElements(max) {
   const picked = globalThis.AdgateCandidates.collectCandidates(document, {
     ...layoutHooks(),
+    hostname: location.hostname,
     max,
   });
   log('info', 'candidates_collected', {
@@ -706,7 +707,33 @@ async function runJudge(trigger) {
     if (jevError) log('error', 'judge_fail', { error: String(jevError.message || jevError), heuristic: decisionRows.length });
   }
 
-  if (!jevError) for (const j of res.elements || []) {
+  if (jevError) {
+    for (const ser of elements) {
+      decisionRows.push({
+        id: ser.id,
+        tag: ser.tag || '',
+        src: ser.src || null,
+        href: ser.href || null,
+        classes: ser.classes || [],
+        idAttr: ser.idAttr || null,
+        role: ser.role || null,
+        rect: ser.rect || null,
+        text: ser.text || '',
+        nearbyLabel: ser.nearbyLabel || null,
+        testId: ser.testId || null,
+        fixedOrSticky: !!ser.fixedOrSticky,
+        discover: ser.discover || '',
+        noul: 0,
+        kind: 'other',
+        action: 'allow',
+        reason: 'judge_error',
+        removed: false,
+        cascadeParents: [],
+        before: null,
+      });
+    }
+  } else {
+    for (const j of res.elements || []) {
     const el = byId[j.id];
     const ser = elements.find((row) => row.id === j.id) || {};
     let removed = false;
@@ -729,6 +756,7 @@ async function runJudge(trigger) {
       action = 'hide';
       reason = `client_${ser.discover || 'ad_slot'}`;
     }
+    // Classify-only when Block is off: never remove.
     const doHide = blockEnabled && (action === 'hide' || ranked.hide || cheatForced);
     if (doHide && el) {
       const outcome = hideEl(el, j.noul, cheatForced || ranked.hide);
@@ -767,7 +795,7 @@ async function runJudge(trigger) {
       discover: ser.discover || '',
       noul: j.noul,
       kind,
-      action,
+      action: !blockEnabled && action === 'hide' ? 'review' : action,
       reason,
       removed,
       cascadeParents: cascade,
@@ -784,14 +812,16 @@ async function runJudge(trigger) {
     log('info', 'element_decision', {
       id: j.id,
       noul: j.noul,
-      action,
-      reason,
+      action: row.action,
+      reason: row.reason,
+      kind: row.kind,
       discover: row.discover,
       href: row.href,
       removed,
       cascade: cascade.length,
       blockEnabled,
     });
+    }
   }
 
   const run = globalThis.AdgateDecisionLog.buildDecisionLog({
@@ -908,7 +938,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.0-classify',
+    mode: '0.1.1-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
