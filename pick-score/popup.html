@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JEV Pick Score</title>
+  <style>
+    body {
+      margin: 0; padding: 12px; width: 380px;
+      font: 13px/1.4 system-ui, sans-serif; color: #e8eef2; background: #101418;
+    }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .sub, .hint { color: #93a4ad; font-size: 12px; }
+    label.field { display: grid; gap: 4px; margin: 8px 0; color: #c5d0d6; }
+    input[type="text"], input[type="password"], select {
+      width: 100%; box-sizing: border-box; padding: 6px 8px;
+      border-radius: 6px; border: 1px solid #2a3a40; background: #0b0e11; color: #eee;
+    }
+    .model-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+    button {
+      border: 0; border-radius: 8px; padding: 8px; font-weight: 650; cursor: pointer;
+    }
+    #refreshModels {
+      border-radius: 6px; padding: 6px 8px; background: #243036; color: #d7e0e4; white-space: nowrap;
+    }
+    .actions { display: flex; gap: 6px; margin: 10px 0; }
+    #save { flex: 1; background: #243036; color: #d7e0e4; }
+    #pick {
+      width: 100%; padding: 12px; font-size: 14px; font-weight: 750;
+      background: #243036; color: #d7e0e4;
+    }
+    #pick.on { background: #0f766e; color: #fff; }
+    #status { color: #9ab; margin: 8px 0; white-space: pre-wrap; }
+    .ok { color: #86efac; } .bad { color: #fda4af; }
+  </style>
+</head>
+<body>
+  <h1>JEV Pick Score <span id="ver" style="color:#7d8b93;font-weight:400"></span></h1>
+  <div class="sub">Click one element. Dagote JEV scores it. Nothing is hidden.</div>
+
+  <label class="field">Service URL
+    <input id="serverUrl" type="text" value="https://www.dagote.ai/api/jev" spellcheck="false" autocomplete="off" />
+  </label>
+  <label class="field">API key
+    <input id="apiKey" type="password" autocomplete="off" spellcheck="false" />
+  </label>
+  <div class="hint">Stored in chrome.storage.sync. Sent as x-api-key. Never written to logs.</div>
+  <div class="field">Model
+    <span class="model-row">
+      <select id="model">
+        <option value="jev-tiny" selected>jev-tiny</option>
+        <option value="jev-latest">jev-latest</option>
+        <option value="jev-3b">jev-3b</option>
+      </select>
+      <button id="refreshModels" type="button">Refresh models</button>
+    </span>
+  </div>
+  <input id="modelCustom" type="text" hidden spellcheck="false" autocomplete="off" placeholder="Model id" />
+  <div class="hint">Default scorer is jev-tiny. Refresh calls GET /models. page-judge sends hideMin 0.75 and this model.</div>
+
+  <div class="actions">
+    <button id="save" type="button">Save</button>
+  </div>
+  <button id="pick" type="button" aria-pressed="false">Pick mode OFF</button>
+  <div class="hint">Turn pick on, hover to outline, click to score. Esc cancels pick mode. Links do not navigate while it is on.</div>
+  <div id="status"></div>
+  <script src="service.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

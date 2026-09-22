@@ -3,7 +3,7 @@
   "private": true,
   "description": "Dev tests for the Adgate extension DOM scan",
   "scripts": {
-    "test": "node --test extension/*.test.js"
+    "test": "node --test extension/*.test.js pick-score/*.test.js"
   },
   "devDependencies": {
     "linkedom": "^0.18.12"
