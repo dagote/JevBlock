@@ -178,5 +178,50 @@
       "urlFilter": "||revcontent.com^",
       "resourceTypes": ["script", "xmlhttprequest", "sub_frame", "image"]
     }
+  },
+  {
+    "id": 21,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||bncloudfl.com^",
+      "resourceTypes": ["script", "xmlhttprequest", "image", "sub_frame", "media", "ping"]
+    }
+  },
+  {
+    "id": 22,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||adsco.re^",
+      "resourceTypes": ["script", "xmlhttprequest", "image", "sub_frame", "ping"]
+    }
+  },
+  {
+    "id": 23,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||antiadblocksystems.com^",
+      "resourceTypes": ["script", "xmlhttprequest", "image", "sub_frame", "ping"]
+    }
+  },
+  {
+    "id": 24,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||coosync.com^",
+      "resourceTypes": ["script", "xmlhttprequest", "image", "sub_frame", "ping"]
+    }
+  },
+  {
+    "id": 25,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||displayendpointstarring.com^",
+      "resourceTypes": ["script", "xmlhttprequest", "image", "sub_frame", "ping"]
+    }
   }
 ]

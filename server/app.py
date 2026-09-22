@@ -21,7 +21,7 @@ JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
 SERVER_DIR = Path(__file__).resolve().parent
 REVIEW_MIN = 0.45
-SERVER_VERSION = "0.2.3"
+SERVER_VERSION = "0.2.4"
 
 
 def resolve_path(env_value: str | None, default: Path) -> Path:
@@ -56,7 +56,8 @@ AD_HOST_RE = re.compile(
 	r"(doubleclick|googlesyndication|googletagservices|adservice\.google|"
 	r"amazon-adsystem|adnxs|taboola|outbrain|popads|propellerads|adsterra|"
 	r"clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|"
-	r"fvcwqkkqmuv|pagead2|(?:^|[^a-z0-9])ad\.com\b)",
+	r"fvcwqkkqmuv|bncloudfl|adsco\.re|antiadblocksystems|coosync\.com|"
+	r"displayendpointstarring|pagead2|(?:^|[^a-z0-9])ad\.com\b)",
 	re.I,
 )
 OVERLAY_HINT_RE = re.compile(r"interstitial|special.?offer|click here", re.I)
@@ -162,7 +163,18 @@ def apply_element_priors(
 	el: PageElement, noul: float, site_type: str, reason: str
 ) -> tuple[float, str]:
 	"""Raise a low System One score. The reason string names the prior."""
-	if reason in ("prefix_too_long_skipped", "s1_error_skipped"):
+	if reason == "prefix_too_long_skipped":
+		return noul, reason
+	if reason == "s1_error_skipped" and not _matches_ad_host(el) and (el.discover or "") not in {
+		"ad_label",
+		"blank_html_widget",
+		"vast_player",
+		"iab_slot",
+		"clb_slot",
+		"ad_host_script",
+		"ad_host_href",
+		"ad_host_asset",
+	}:
 		return noul, reason
 	src = el.src or ""
 	if site_type == "mail" and "mail-us" in src and noul < PRIOR_FLOOR:
@@ -177,6 +189,8 @@ def apply_element_priors(
 		return PRIOR_FLOOR, "blank_ad_slot"
 	if (el.discover or "") == "ad_label" and not _matches_ad_host(el) and noul < PRIOR_FLOOR:
 		return PRIOR_FLOOR, "ad_label"
+	if (el.discover or "") in {"iab_slot", "clb_slot", "vast_player"} and noul < PRIOR_FLOOR:
+		return PRIOR_FLOOR, el.discover
 	return noul, reason
 
 
@@ -453,12 +467,17 @@ def logs_tail(n: int = 80) -> dict[str, Any]:
 def ingest_logs(batch: LogBatch) -> dict[str, Any]:
 	decision_runs = 0
 	for entry in batch.entries[:200]:
+		fields = {
+			k: v
+			for k, v in entry.items()
+			if k not in ("event", "sessionId", "client", "clientEvent")
+		}
 		log_event(
 			"client",
 			sessionId=batch.sessionId,
 			client=batch.client,
-			**{k: v for k, v in entry.items() if k != "event"},
 			clientEvent=entry.get("event") or entry.get("msg") or "log",
+			**fields,
 		)
 		if entry.get("event") == "decision_run" and isinstance(entry.get("run"), dict):
 			persist_decision_run(entry["run"])

@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.5 — page judge, block path, review log.
+ * Adgate 0.0.6 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.5';
+const CLIENT = 'extension-0.0.6';
 
 let suppressMutations = false;
 
@@ -139,11 +139,11 @@ function collectElements(max) {
   return picked;
 }
 
-function hideEl(el, noul) {
+function hideEl(el, noul, slot) {
   if (!el || !el.isConnected) return { removed: false, cascade: [], before: null };
-  if (isLayoutShell(el) && el.tagName !== 'IFRAME') {
+  if (!slot && isLayoutShell(el) && el.tagName !== 'IFRAME') {
     const ifr = el.querySelector('iframe');
-    if (ifr) return hideEl(ifr, noul);
+    if (ifr) return hideEl(ifr, noul, false);
     log('warn', 'skip_layout', { tag: el.tagName, cls: cls(el).slice(0, 60) });
     return { removed: false, cascade: [], before: null };
   }
@@ -376,8 +376,15 @@ async function runJudge(trigger) {
     let removed = false;
     let cascade = [];
     let before = null;
-    if (blockEnabled && j.action === 'hide' && el) {
-      const outcome = hideEl(el, j.noul);
+    const forced = blockEnabled && globalThis.AdgateCandidates.isForcedHide(ser);
+    let action = j.action;
+    let reason = j.reason;
+    if (forced && action !== 'hide') {
+      action = 'hide';
+      reason = `client_${ser.discover || 'ad_slot'}`;
+    }
+    if (blockEnabled && action === 'hide' && el) {
+      const outcome = hideEl(el, j.noul, forced || ser.discover);
       removed = outcome.removed;
       cascade = outcome.cascade;
       before = outcome.before;
@@ -411,8 +418,8 @@ async function runJudge(trigger) {
       fixedOrSticky: !!ser.fixedOrSticky,
       discover: ser.discover || '',
       noul: j.noul,
-      action: j.action,
-      reason: j.reason,
+      action,
+      reason,
       removed,
       cascadeParents: cascade,
       before,
@@ -428,8 +435,8 @@ async function runJudge(trigger) {
     log('info', 'element_decision', {
       id: j.id,
       noul: j.noul,
-      action: j.action,
-      reason: j.reason,
+      action,
+      reason,
       discover: row.discover,
       href: row.href,
       removed,
@@ -551,7 +558,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.5-review',
+    mode: '0.0.6-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

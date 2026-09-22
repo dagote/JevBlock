@@ -203,6 +203,37 @@ class PageJudgePriorTests(unittest.TestCase):
 			"s1_plus_adhost_prior",
 		)
 
+	def test_ingest_log_ignores_duplicate_session_fields(self) -> None:
+		result = app.ingest_logs(
+			app.LogBatch(
+				sessionId="sess-1",
+				client="extension-bg-0.2.4",
+				entries=[
+					{
+						"event": "page_judge_fetch",
+						"sessionId": "sess-1",
+						"client": "extension",
+						"clientEvent": "nope",
+						"n": 2,
+					}
+				],
+			)
+		)
+		self.assertEqual(result["ok"], True)
+		self.assertGreaterEqual(result["accepted"], 1)
+
+	def test_creative_cdn_is_an_ad_host(self) -> None:
+		creative = app.PageElement(
+			id="e",
+			tag="img",
+			src="https://cdn.bncloudfl.com/bn/730/e27/758/creative.gif",
+		)
+		self.assertTrue(app._matches_ad_host(creative))
+		self.assertEqual(
+			app.apply_element_priors(creative, 0.1, "marketing", "s1_error_skipped")[1],
+			"s1_plus_adhost_prior",
+		)
+
 	def test_priors_do_not_relabel_a_high_score_or_a_skip(self) -> None:
 		host = app.PageElement(id="e", href="https://ad.com/x")
 		self.assertEqual(

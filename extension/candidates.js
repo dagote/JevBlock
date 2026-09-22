@@ -9,7 +9,35 @@
   else root.AdgateCandidates = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const AD_HOST_RE =
-    /doubleclick|googlesyndication|googletagservices|adservice\.google|amazon-adsystem|adnxs|taboola|outbrain|popads|propellerads|adsterra|clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|fvcwqkkqmuv|pagead2|(?:^|[^a-z0-9])ad\.com\b/i;
+    /doubleclick|googlesyndication|googletagservices|adservice\.google|amazon-adsystem|adnxs|taboola|outbrain|popads|propellerads|adsterra|clickadu|exoclick|juicyads|mgid|revcontent|12ezo5v60|ybs2ffs7v|fvcwqkkqmuv|bncloudfl|adsco\.re|antiadblocksystems|coosync\.com|displayendpointstarring|pagead2|(?:^|[^a-z0-9])ad\.com\b/i;
+  const FORCED_HIDE = new Set([
+    'ad_host_script',
+    'ad_host_href',
+    'ad_host_asset',
+    'ad_label',
+    'vast_player',
+    'blank_html_widget',
+    'role_advertisement',
+    'iab_slot',
+    'clb_slot',
+    'adsense',
+    'gpt_slot',
+  ]);
+  const IAB_SIZES = new Set([
+    '300x250',
+    '336x280',
+    '728x90',
+    '320x50',
+    '320x100',
+    '300x100',
+    '160x600',
+    '300x600',
+    '970x90',
+    '970x250',
+    '468x60',
+    '120x600',
+    '250x250',
+  ]);
   const OVERLAY_RE = /interstitial|special.?offer|click here/i;
   const PUSH_RE = /notification-permission|wants to\b.{0,80}?notifications/i;
   const STOP_TAGS = new Set(['html', 'body', 'head', 'main', 'header', 'nav', 'footer']);
@@ -63,7 +91,20 @@
   function isAdLabelShell(el) {
     const classes = classNameOf(el);
     if (!/\belementor-widget-html\b/.test(classes) && !/\bcode-block\b/.test(classes)) return false;
-    return /^advertisements?$/i.test(visibleText(widgetBox(el)));
+    if (/^advertisements?$/i.test(visibleText(widgetBox(el)))) return true;
+    return hasAdLabel(el);
+  }
+
+  function hasAdLabel(el) {
+    if (!el || !el.querySelectorAll) return false;
+    const nodes = el.querySelectorAll('center, p, span, div, label, small, strong, h5, h6');
+    for (let i = 0; i < nodes.length; i++) {
+      const raw = nodes[i].textContent || '';
+      if (raw.length > 40) continue;
+      const text = raw.replace(/\s+/g, ' ').trim();
+      if (/^advertisements?$/i.test(text) || /^caution!?$/i.test(text)) return true;
+    }
+    return false;
   }
 
   function isBlankHtmlWidget(el) {
@@ -167,6 +208,52 @@
     return !!(el.closest && el.closest('[data-adgate-blocked],[data-adgate-ignore]'));
   }
 
+  function boxSize(el, getRect) {
+    const rect = readRect(el, getRect);
+    let w = Number(rect.width) || 0;
+    let h = Number(rect.height) || 0;
+    if (w < 2 || h < 2) {
+      const style = (el.getAttribute && el.getAttribute('style')) || '';
+      const ws = /(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)px/i.exec(style);
+      const hs = /(?:^|;)\s*height\s*:\s*(\d+(?:\.\d+)?)px/i.exec(style);
+      if (ws) w = Number(ws[1]);
+      if (hs) h = Number(hs[1]);
+      const aw = Number(el.getAttribute && el.getAttribute('width'));
+      const ah = Number(el.getAttribute && el.getAttribute('height'));
+      if (aw) w = aw;
+      if (ah) h = ah;
+    }
+    return { w: Math.round(w), h: Math.round(h) };
+  }
+
+  function isIabBox(el, getRect) {
+    const box = boxSize(el, getRect);
+    return IAB_SIZES.has(`${box.w}x${box.h}`);
+  }
+
+  function isClb(el) {
+    const blob = `${el.id || ''} ${classNameOf(el)}`;
+    return /__clb-|code-block-\d/i.test(blob);
+  }
+
+  function isJunkFrame(el) {
+    const src = (el.getAttribute && (el.getAttribute('src') || '')) || '';
+    const blob = `${el.id || ''} ${classNameOf(el)} ${el.getAttribute && (el.getAttribute('title') || '')} ${el.getAttribute && (el.getAttribute('name') || '')}`;
+    if (/^javascript:/i.test(src)) return true;
+    if (/iubenda|privacy|recaptcha|cookiebot|cookie-law|consent/i.test(blob)) return true;
+    if (!src && !isClb(el) && !isIabBox(el) && !AD_HOST_RE.test(src)) {
+      const box = boxSize(el);
+      if (box.w < 20 || box.h < 20) return true;
+    }
+    return false;
+  }
+
+  function isForcedHide(row) {
+    if (!row) return false;
+    if (FORCED_HIDE.has(row.discover || '')) return true;
+    return AD_HOST_RE.test(row.src || '') || AD_HOST_RE.test(row.href || '');
+  }
+
   function scopesOf(doc) {
     const root = doc.documentElement || doc.body || doc;
     const scopes = [root];
@@ -185,13 +272,13 @@
       let skip = false;
       for (let i = 0; i < picked.length; i++) {
         const other = picked[i];
-        if (other.el === item.el || (other.el.contains && other.el.contains(item.el))) {
+        const overlaps =
+          other.el === item.el ||
+          (other.el.contains && other.el.contains(item.el)) ||
+          (item.el.contains && item.el.contains(other.el));
+        if (overlaps) {
           skip = true;
           break;
-        }
-        if (item.el.contains && item.el.contains(other.el)) {
-          picked.splice(i, 1);
-          i -= 1;
         }
       }
       if (skip) continue;
@@ -212,6 +299,7 @@
       if (['style', 'link', 'meta', 'noscript', 'html', 'body', 'head'].includes(tag)) return;
       if (tag !== 'script' && isLandmark(el)) return;
       const prev = found.get(el);
+      if (prev && FORCED_HIDE.has(prev.discover) && !FORCED_HIDE.has(discover)) return;
       if (!prev || pri > prev.pri) {
         found.set(el, { el, discover, pri, evidence: evidence || '' });
       }
@@ -245,8 +333,17 @@
           add(slotForAsset(el), 'adsense', 940000, url);
           return;
         }
-        const discover = hostish ? 'ad_host_asset' : tag;
-        add(slotForAsset(el), discover, hostish ? 960000 : 900000, url);
+        if (tag === 'iframe' && !hostish && isJunkFrame(el)) return;
+        let discover = hostish ? 'ad_host_asset' : tag;
+        let pri = hostish ? 960000 : 900000;
+        if (tag === 'iframe' && isClb(el)) {
+          discover = 'clb_slot';
+          pri = 955000;
+        } else if (tag === 'iframe' && isIabBox(el, options.getRect)) {
+          discover = 'iab_slot';
+          pri = 945000;
+        }
+        add(slotForAsset(el), discover, pri, url);
       });
 
       scope.querySelectorAll('.elementor-widget-html, .elementor-widget-shortcode, .code-block').forEach((el) => {
@@ -258,8 +355,32 @@
           add(slot, vast ? 'vast_player' : 'ad_host_script', vast ? 965000 : 980000, urls[0]);
           return;
         }
-        if (isAdLabelShell(el)) add(slot, 'ad_label', 860000, '');
+        if (isAdLabelShell(el) || hasAdLabel(el)) add(slot, 'ad_label', 940000, '');
         else if (isBlankHtmlWidget(el)) add(el, 'blank_html_widget', 720000, '');
+        else if (/\belementor-widget-shortcode\b/.test(classes) && el.querySelector && el.querySelector('.vast_video_loading, .fluid_video_wrapper, video[id^="fp-"]')) {
+          add(slot, 'vast_player', 930000, urls[0] || '');
+        }
+      });
+
+      scope.querySelectorAll('center, p, span, div, label, small, strong').forEach((el) => {
+        const raw = el.textContent || '';
+        if (raw.length > 40) return;
+        const text = raw.replace(/\s+/g, ' ').trim();
+        if (!/^advertisements?$/i.test(text) && !/^caution!?$/i.test(text)) return;
+        if (el.closest && el.closest('.elementor-widget-text-editor, .elementor-widget-image, nav, header')) return;
+        const classes = classNameOf(el);
+        if (/\belementor-(column|section|container|widget-wrap)\b/.test(classes)) return;
+        if (
+          el.querySelector &&
+          el.querySelector('.elementor-widget-html, .elementor-widget-shortcode, .code-block') &&
+          !/\belementor-widget-html\b|\belementor-widget-shortcode\b|\bcode-block\b/.test(classes)
+        ) {
+          return;
+        }
+        const slot = slotForAsset(el);
+        if (/\belementor-widget-text-editor\b/.test(classNameOf(slot))) return;
+        if (/\belementor-(column|section|container|widget-wrap)\b/.test(classNameOf(slot))) return;
+        add(slot, 'ad_label', 940000, '');
       });
 
       scope
@@ -291,6 +412,22 @@
         if (urls.length && (pos === 'fixed' || pos === 'sticky')) {
           add(slotForAsset(el), 'ad_host_asset', 900000, urls[0]);
         }
+      });
+    }
+
+    const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+    for (let i = 0; i < frames.length; i++) {
+      let inner = null;
+      try {
+        inner = frames[i].contentDocument;
+      } catch {
+        inner = null;
+      }
+      if (!inner || !inner.querySelectorAll || inner === doc) continue;
+      inner.querySelectorAll('img[src], iframe[src], a[href], script[src]').forEach((el) => {
+        const url = el.getAttribute('src') || el.getAttribute('href') || '';
+        if (!AD_HOST_RE.test(url)) return;
+        add(slotForAsset(frames[i]), 'ad_host_asset', 960000, url);
       });
     }
 
@@ -339,8 +476,10 @@
 
   return {
     AD_HOST_RE,
+    FORCED_HIDE,
     collectCandidates,
     serializeCandidate,
+    isForcedHide,
     slotForAsset,
     adUrlsIn,
     visibleText,
