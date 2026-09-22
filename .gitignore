@@ -1,0 +1,26 @@
+# runtime / local
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# logs & caches
+logs/
+*.jsonl
+*.log
+
+# built extension packages (rebuild from extension/)
+*.zip
+adgate-*.zip
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# env
+.env
+.env.*
+!.env.example

@@ -1,0 +1,19 @@
+[Unit]
+Description=adgate intranet System One ad classifier
+After=network-online.target jev-local.service
+Wants=network-online.target jev-local.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ruin/projects/experiments/adblock-systemone/server
+ExecStart=/home/ruin/projects/experiments/adblock-systemone/server/scripts/start.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adgate
+Environment=PYTHONUNBUFFERED=1
+Environment=ADGATE_JEV_URL=http://127.0.0.1:8765
+
+[Install]
+WantedBy=default.target

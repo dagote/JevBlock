@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Adgate</title>
+  <style>
+    body {
+      margin: 0; padding: 12px; width: 420px; max-height: 560px; overflow: auto;
+      font: 12px/1.4 system-ui, sans-serif; color: #e8e8ef; background: #12121a;
+    }
+    h1 { font-size: 14px; margin: 0 0 4px; }
+    .sub { color: #888; margin-bottom: 10px; font-size: 11px; }
+    .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    label.field { display: grid; gap: 4px; margin-bottom: 8px; color: #aaa; }
+    input[type="text"], input[type="number"] {
+      width: 100%; box-sizing: border-box; padding: 6px 8px;
+      border-radius: 6px; border: 1px solid #333; background: #0c0c12; color: #eee;
+    }
+    .actions { display: flex; gap: 6px; margin: 8px 0; }
+    .actions button { flex: 1; border: 0; border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; }
+    #save { background: #7c5ce6; color: #fff; }
+    #scan { background: #2a2a36; color: #ddd; }
+    #status { color: #9ab; margin: 6px 0; white-space: pre-wrap; }
+    .ok { color: #86efac; } .bad { color: #fca5a5; }
+    .site { background: #1a1a26; border: 1px solid #333; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+    .site strong { color: #c4b5fd; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .pill { background: #1c1c28; border: 1px solid #333; border-radius: 999px; padding: 2px 8px; color: #bbb; }
+    details { margin-top: 6px; border-top: 1px solid #222; padding-top: 6px; }
+    summary { cursor: pointer; color: #c4b5fd; }
+    .meta { color: #777; word-break: break-all; margin-top: 4px; }
+    .hide { color: #c4b5fd; } .review { color: #fbbf24; } .allow { color: #94a3b8; }
+    pre { background: #0a0a10; padding: 8px; border-radius: 6px; overflow: auto; font-size: 10px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>Adgate <span id="ver" style="color:#888;font-weight:400"></span></h1>
+  <div class="sub">Annotate mode: show P(ad|unrelated) on elements. Blocking off unless you enable it.</div>
+
+  <div class="row"><span>Enabled</span><input id="enabled" type="checkbox" checked /></div>
+  <div class="row"><span>Block (actually remove)</span><input id="blockEnabled" type="checkbox" /></div>
+  <div class="row"><span>% labels on page</span><input id="showLabels" type="checkbox" checked /></div>
+  <div class="row"><span>Data panel on page</span><input id="showPanel" type="checkbox" checked /></div>
+  <label class="field">Suggest hide when P ≥ <input id="hideMin" type="number" min="0.5" max="0.99" step="0.05" value="0.75" /></label>
+  <label class="field">Server <input id="serverUrl" type="text" value="http://192.168.0.119:8770" /></label>
+
+  <div class="actions">
+    <button id="save" type="button">Save</button>
+    <button id="scan" type="button">Judge this tab</button>
+  </div>
+  <div id="status"></div>
+  <div id="site" class="site" style="display:none"></div>
+  <div id="pills" class="pills"></div>
+  <div id="list"></div>
+  <details id="rawwrap" style="display:none"><summary>Raw JSON</summary><pre id="raw"></pre></details>
+  <script src="popup.js"></script>
+</body>
+</html>
