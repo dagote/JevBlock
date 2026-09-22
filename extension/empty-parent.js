@@ -1,6 +1,8 @@
 /**
  * After a hide-action node is removed, drop ancestor shells that no longer
  * contain meaningful text or media. Never remove document / landmark stops.
+ * Blank, about:blank, and ~0-size iframes are not media. Empty full-bleed
+ * ad rails collapse; full-bleed boxes that still hold real content stay.
  */
 (function (root, factory) {
   const api = factory();
@@ -27,10 +29,29 @@
     return false;
   }
 
-  function isPageShell(el) {
-    const blob = classListOf(el).join(' ');
+  function classBlob(el) {
+    if (!el) return '';
+    if (typeof el.className === 'string') return el.className;
+    if (el.className && el.className.baseVal) return String(el.className.baseVal);
+    return '';
+  }
+
+  function viewOf(el) {
+    try {
+      if (el.ownerDocument && el.ownerDocument.defaultView) return el.ownerDocument.defaultView;
+    } catch {
+      /* ignore */
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.window) return globalThis.window;
+    return undefined;
+  }
+
+  /** h-full+w-full, or a box that covers about 40% of the viewport. */
+  function isFullBleed(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const blob = classBlob(el);
     if (/\bh-full\b/.test(blob) && /\bw-full\b/.test(blob)) return true;
-    const view = typeof globalThis !== 'undefined' ? globalThis.window : undefined;
+    const view = viewOf(el);
     if (!view || !el.getBoundingClientRect) return false;
     try {
       const rect = el.getBoundingClientRect();
@@ -40,6 +61,17 @@
       return false;
     }
     return false;
+  }
+
+  /**
+   * Full-bleed is page chrome only while it still holds real content.
+   * An empty h-full/w-full or large ad column (often a flex/grid rail)
+   * is not a page root and may collapse.
+   */
+  function isPageShell(el) {
+    if (!isFullBleed(el)) return false;
+    if (!hasMeaningfulContent(el)) return false;
+    return true;
   }
 
   function classListOf(el) {
@@ -67,6 +99,44 @@
     return out.replace(/\s+/g, ' ').trim();
   }
 
+  function frameSrc(node) {
+    try {
+      if (node.getAttribute) {
+        const attr = node.getAttribute('src');
+        if (attr != null) return String(attr).trim();
+      }
+    } catch {
+      /* ignore */
+    }
+    if (node.src == null) return '';
+    return String(node.src).trim();
+  }
+
+  function isBlankFrameSrc(src) {
+    if (!src) return true;
+    const lower = src.replace(/\s+/g, '').toLowerCase();
+    return lower === 'about:blank' || lower.startsWith('about:blank#') || lower.startsWith('about:blank?');
+  }
+
+  /** Visible box is ~0. Prefer layout rect; fall back to width/height attributes. */
+  function isTinyBox(node) {
+    if (node.getBoundingClientRect) {
+      try {
+        const rect = node.getBoundingClientRect();
+        const w = Number(rect.width);
+        const h = Number(rect.height);
+        if (Number.isFinite(w) && Number.isFinite(h)) return w <= 2 && h <= 2;
+      } catch {
+        return false;
+      }
+    }
+    if (!node.getAttribute) return false;
+    const w = Number(node.getAttribute('width'));
+    const h = Number(node.getAttribute('height'));
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return false;
+    return w <= 2 && h <= 2;
+  }
+
   function hasMeaningfulContent(el) {
     const media = el.querySelectorAll ? el.querySelectorAll(MEDIA_SELECTOR) : [];
     for (let i = 0; i < media.length; i++) {
@@ -83,6 +153,9 @@
           return true;
         }
         if (w <= 2 && h <= 2) continue;
+      }
+      if (tag === 'IFRAME') {
+        if (isBlankFrameSrc(frameSrc(node)) || isTinyBox(node)) continue;
       }
       return true;
     }
@@ -137,6 +210,7 @@
   return {
     isSafetyStop,
     isPageShell,
+    isFullBleed,
     hasMeaningfulContent,
     collapseEmptyAncestors,
     describeRemovedParent,

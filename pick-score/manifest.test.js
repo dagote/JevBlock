@@ -6,7 +6,7 @@ const path = require('node:path');
 const manifest = require('./manifest.json');
 const adgate = require('../extension/manifest.json');
 
-test('pick-score is a separate MV3 extension and Adgate stays 0.1.7', () => {
+test('pick-score is a separate MV3 extension and Adgate stays 0.1.8', () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, 'JEV Pick Score');
   assert.equal(manifest.version, '0.1.0');
@@ -19,7 +19,7 @@ test('pick-score is a separate MV3 extension and Adgate stays 0.1.7', () => {
   assert.deepEqual(manifest.content_scripts[0].js, ['collect.js', 'content.js']);
   assert.equal(manifest.permissions.includes('declarativeNetRequest'), false);
   assert.equal(adgate.name, 'Adgate');
-  assert.equal(adgate.version, '0.1.7');
+  assert.equal(adgate.version, '0.1.8');
 });
 
 test('popup and content script implement pick mode without force-hide', () => {
