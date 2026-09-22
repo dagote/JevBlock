@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.9",
-  "description": "0.0.9 — Block force-hides ad.com direct links before JEV",
+  "version": "0.0.10",
+  "description": "0.0.10 — Block force-hides VAST shortcode slots before JEV",
   "permissions": [
     "storage",
     "activeTab",

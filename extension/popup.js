@@ -9,7 +9,7 @@ const DEFAULTS = {
   uiRev: 1,
   serverUrl: 'http://192.168.0.119:8770',
 };
-const NEED = '0.0.9';
+const NEED = '0.0.10';
 const $ = (id) => document.getElementById(id);
 
 function setStatus(text, cls) {

@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.9 — page judge, block path, review log.
+ * Adgate 0.0.10 — page judge, block path, review log.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const CLIENT = 'extension-0.0.9';
+const CLIENT = 'extension-0.0.10';
 
 let suppressMutations = false;
 
@@ -281,6 +281,90 @@ function removeAdComLinks(doc) {
   return rows;
 }
 
+const VAST_HOST_RE = /12ezo5v60\.com/i;
+const VAST_TAG_RE = /vastTag|vast_options/i;
+
+function vastSlotWidget(el) {
+  let cur = el;
+  while (cur && cur.nodeType === 1) {
+    const c = cls(cur);
+    if (/elementor-widget-shortcode|elementor-widget-html/.test(c)) return cur;
+    const tag = String(cur.tagName || '').toLowerCase();
+    if (
+      cur !== el &&
+      (['html', 'body', 'main', 'header', 'nav', 'footer', 'section'].includes(tag) ||
+        /elementor-widget-text-editor|elementor-column|elementor-section|elementor-widget-wrap/.test(c))
+    ) {
+      break;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+function widgetHasVast(widget) {
+  if (!widget || !widget.querySelectorAll) return false;
+  const scripts = widget.querySelectorAll('script');
+  for (let i = 0; i < scripts.length; i++) {
+    const src = scripts[i].getAttribute('src') || '';
+    const text = (scripts[i].textContent || '').replace(/\\\//g, '/');
+    if (VAST_HOST_RE.test(src) || VAST_HOST_RE.test(text)) return true;
+    if (VAST_TAG_RE.test(text) && VAST_HOST_RE.test(text)) return true;
+    if (/vastTag/i.test(text) && /https?:\/\//i.test(text)) return true;
+  }
+  if (widget.querySelector('.vast_video_loading, .fluid_video_wrapper')) return true;
+  return false;
+}
+
+/** Issue #4: Elementor shortcode/html widgets that load a VAST pre-roll tag. */
+function findVastSlots(doc) {
+  const root = typeof doc.querySelectorAll === 'function' ? doc : doc.documentElement || doc.body;
+  if (!root || !root.querySelectorAll) return [];
+  const hits = [];
+  root.querySelectorAll('.elementor-widget-shortcode, .elementor-widget-html').forEach((widget) => {
+    if (!widgetHasVast(widget)) return;
+    if (hits.includes(widget)) return;
+    hits.push(widget);
+  });
+  root.querySelectorAll('script').forEach((script) => {
+    const blob = `${script.getAttribute('src') || ''} ${(script.textContent || '').replace(/\\\//g, '/')}`;
+    if (!VAST_HOST_RE.test(blob) && !(/vastTag/i.test(blob) && /https?:\/\//i.test(blob))) return;
+    const widget = vastSlotWidget(script);
+    if (!widget || hits.includes(widget)) return;
+    hits.push(widget);
+  });
+  return hits;
+}
+
+function removeVastSlots(doc) {
+  const rows = [];
+  findVastSlots(doc).forEach((el, i) => {
+    if (!el.isConnected) return;
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    const outcome = hideEl(el, 1, true);
+    rows.push({
+      id: `v${i}`,
+      tag: String(el.tagName || '').toLowerCase(),
+      src: null,
+      href: null,
+      classes: cls(el).split(/\s+/).filter(Boolean).slice(0, 16),
+      idAttr: el.id || null,
+      role: el.getAttribute('role'),
+      rect: null,
+      text,
+      fixedOrSticky: false,
+      discover: 'force_hide_vast_slot',
+      noul: 1,
+      action: 'hide',
+      reason: 'force_hide_vast_slot',
+      removed: outcome.removed,
+      cascadeParents: outcome.cascade,
+      before: outcome.before,
+    });
+  });
+  return rows;
+}
+
 function hideEl(el, noul, slot) {
   if (!el || !el.isConnected) return { removed: false, cascade: [], before: null };
   if (!slot && isLayoutShell(el) && el.tagName !== 'IFRAME') {
@@ -497,6 +581,7 @@ async function runJudge(trigger) {
     decisionRows.push(...removeAdvertisementWidgets(document));
     decisionRows.push(...removeClbContainers(document));
     decisionRows.push(...removeAdComLinks(document));
+    decisionRows.push(...removeVastSlots(document));
   }
 
   const picked = collectElements(Number(settings.maxElements) || 24).filter((item) => item.el?.isConnected);
@@ -719,7 +804,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.9-review',
+    mode: '0.0.10-review',
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,
