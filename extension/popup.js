@@ -10,10 +10,10 @@ const DEFAULTS = {
   uiRev: 3,
   serverUrl: 'https://www.dagote.ai/api/jev',
   apiKey: '',
-  model: 'jev-latest',
+  model: 'jev-tiny',
   ranks: null,
 };
-const NEED = '0.1.5';
+const NEED = '0.1.6';
 const CUSTOM_MODEL = '__custom__';
 const RANK_KEYS = ['ad', 'promo', 'unrelated_inject', 'donate_ask', 'tracking_chrome'];
 const $ = (id) => document.getElementById(id);
@@ -158,7 +158,6 @@ async function load() {
   $('ver').textContent = `v${manifest.version}`;
   if (manifest.version !== NEED) setStatus(`Wrong build v${manifest.version}. Need v${NEED}.`, 'bad');
   const stored = await chrome.storage.sync.get(null);
-  const hadModel = Boolean(String(stored.model || '').trim());
   const migrated = globalThis.AdgateServiceLink.migrateStoredSettings(stored);
   if (migrated.changed) await chrome.storage.sync.set(migrated.patch);
   const data = { ...DEFAULTS, ...stored, ...migrated.patch };
@@ -175,7 +174,8 @@ async function load() {
   fillModelSelect(globalThis.AdgateServiceLink.FALLBACK_MODELS, data.model || DEFAULTS.model);
   fillRanks(data.ranks);
   render((await chrome.storage.local.get(['adgateLastRun'])).adgateLastRun);
-  await refreshModels({ preferServerDefault: !hadModel, quiet: true });
+  // Keep jev-tiny (or a stored id). Do not replace it with the server payload default.
+  await refreshModels({ preferServerDefault: false, quiet: true });
 }
 
 function readSettings() {

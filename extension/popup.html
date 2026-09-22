@@ -69,15 +69,15 @@
   <div class="field">Model
     <span class="model-row">
       <select id="model">
-        <option value="jev-tiny">jev-tiny</option>
-        <option value="jev-latest" selected>jev-latest</option>
+        <option value="jev-tiny" selected>jev-tiny</option>
+        <option value="jev-latest">jev-latest</option>
         <option value="jev-3b">jev-3b</option>
       </select>
       <button id="refreshModels" type="button">Refresh models</button>
     </span>
   </div>
   <input id="modelCustom" type="text" hidden spellcheck="false" autocomplete="off" placeholder="Model id" />
-  <div class="hint">GET /models fills this list. The chosen id is sent on every page-judge call, even if that model is not loaded yet.</div>
+  <div class="hint">Default scorer is jev-tiny (0.5B). GET /models fills this list; jev-latest and jev-3b stay selectable. The chosen id is sent on every page-judge call.</div>
 
   <div class="actions">
     <button id="save" type="button">Save</button>

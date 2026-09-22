@@ -19,7 +19,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const DAGOTE_SERVER_URL = 'https://www.dagote.ai/api/jev';
   const OLD_LAN_SERVER_URL = 'http://192.168.0.119:8770';
-  const DEFAULT_MODEL = 'jev-latest';
+  const DEFAULT_MODEL = 'jev-tiny';
   const UI_REV = 3;
   const FALLBACK_MODELS = [
     { id: 'jev-tiny', hf_id: 'Qwen/Qwen2.5-0.5B-Instruct' },
@@ -135,6 +135,50 @@
     return urls;
   }
 
+  const BUSY_RETRY_DEFAULT_MS = 2000;
+  const BUSY_RETRY_MAX_MS = 120000;
+
+  function judgeErrorMessage(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    const err = payload.error;
+    if (typeof err === 'string') return err;
+    if (err && typeof err === 'object') return String(err.message || err.detail || '');
+    if (typeof payload.detail === 'string') return payload.detail;
+    if (typeof payload.message === 'string') return payload.message;
+    return '';
+  }
+
+  function readRetryAfterSeconds(payload, retryAfterHeader) {
+    const nested =
+      payload?.error && typeof payload.error === 'object' ? payload.error.retryAfter : undefined;
+    const candidates = [payload?.retryAfter, nested, retryAfterHeader];
+    for (const value of candidates) {
+      if (value == null || value === '') continue;
+      const seconds = Number(value);
+      if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+    }
+    return null;
+  }
+
+  /**
+   * Dagote returns 429 / busy while another reply is generating.
+   * Delay is body.retryAfter (seconds), then the Retry-After header.
+   * Returns null when the response is not a busy retry.
+   * A parsed JSON body is not scanned as raw text, so page excerpts cannot trip this.
+   */
+  function pageJudgeBusyDelayMs({ status, data, text, retryAfterHeader } = {}) {
+    const payload = data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+    const message = payload ? judgeErrorMessage(payload) : String(text || '');
+    const busy =
+      Number(status) === 429 ||
+      payload?.busy === true ||
+      /already generating a reply/i.test(message);
+    if (!busy) return null;
+    const seconds = readRetryAfterSeconds(payload, retryAfterHeader);
+    const ms = seconds == null ? BUSY_RETRY_DEFAULT_MS : Math.round(seconds * 1000);
+    return Math.min(Math.max(ms, 0), BUSY_RETRY_MAX_MS);
+  }
+
   function parseModelsPayload(payload) {
     const rows = Array.isArray(payload?.data) ? payload.data : [];
     const models = [];
@@ -205,5 +249,6 @@
     modelListUrls,
     parseModelsPayload,
     fetchModelList,
+    pageJudgeBusyDelayMs,
   };
 });

@@ -1,4 +1,4 @@
-# Adgate 0.1.5 — System One page classify + user ranks
+# Adgate 0.1.6 — System One page classify + user ranks
 
 ## Idea
 
@@ -72,7 +72,7 @@ Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host 
 Popup **Service URL** defaults to `https://www.dagote.ai/api/jev`. Existing installs whose stored URL is empty or still the old LAN default `http://192.168.0.119:8770` migrate to that host (`uiRev` 3). A custom URL is left alone, and typing the LAN URL back in after the upgrade keeps it.
 
 - **API key** — stored in `chrome.storage.sync` (a short string, under the 8KB per-item sync quota). Sent as `x-api-key` on page-judge and log calls when non-empty. Optional for LAN. Never written to console logs.
-- **Model** — `GET {Service URL}/models` returns `{ data: [{ id, hf_id, aliases }], default, loaded }`. The popup lists every id. Default selection is `jev-latest`, or the payload `default` when that fetch succeeds before the user has chosen. The page-judge JSON body always includes `model`. Do not rely on the server default alone. A parent `/models` URL is tried only if the first path 404s.
+- **Model** — `GET {Service URL}/models` returns `{ data: [{ id, hf_id, aliases }], default, loaded }`. The popup lists every id. The default scorer is `jev-tiny` (0.5B) on Dagote. `jev-latest` and `jev-3b` stay on that list for the user to pick. A stored model is kept, including an existing `jev-latest` choice; only an empty or missing model is filled with `jev-tiny`. The page-judge JSON body always includes `model`. Do not rely on the server default alone. A parent `/models` URL is tried only if the first path 404s. A Dagote `429` or `busy` body (“Already generating a reply”) is retried with `retryAfter` (seconds). The API key is not written to those logs. Boot judges stay enabled.
 - **LAN fallback (not the default)** — Adgate `http://192.168.0.119:8770`, jev-local `http://192.168.0.119:8765`.
 - Local open-weight jev-local is not hosted TypeSafe Jev quality.
 
@@ -88,4 +88,4 @@ Page-judge uses `noul` (ad / unrelated) and `choice` (site type and element kind
 
 ## Versions
 
-Extension **0.1.5**. Server **0.3.2**. The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV.
+Extension **0.1.6**. Server **0.3.2**. The page-judge flight helper is an IIFE (`AdgatePageJudgeFlight`) so the service worker can `importScripts` it without redeclaring `PAGE_JUDGE_TIMEOUT_MS`. Client page-judge timeout 15 minutes + single-flight. Soft remap is classification-only. Force-hide cheats stay off. Service URL defaults to Dagote hosted JEV. Default scorer is jev-tiny (0.5B).

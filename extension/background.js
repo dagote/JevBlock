@@ -1,4 +1,4 @@
-/** Adgate 0.1.5 — service worker. page-judge and log fetch live here. */
+/** Adgate 0.1.6 — service worker. page-judge and log fetch live here. */
 
 importScripts('page-judge-flight.js');
 importScripts('service-link.js');
@@ -16,10 +16,11 @@ const DEFAULTS = {
   maxElements: 24,
   serverUrl: 'https://www.dagote.ai/api/jev',
   apiKey: '',
-  model: 'jev-latest',
+  model: 'jev-tiny',
 };
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
+const PAGE_JUDGE_BUSY_ATTEMPTS = 30;
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';
 // Do not destructure PAGE_JUDGE_TIMEOUT_MS / createPageJudgeFlight into this
@@ -118,6 +119,87 @@ async function syncEarlyScript(enabled) {
     await chrome.scripting.unregisterContentScripts({ ids: [EARLY_ID] });
   }
   pushLog('info', 'early_sync', { enabled: !!enabled });
+}
+
+function sleepWithSignal(ms, signal) {
+  if (signal?.aborted) {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      reject(err);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function judgeFailureMessage(data, text, status) {
+  if (data && typeof data === 'object') {
+    if (typeof data.detail === 'string' && data.detail) return data.detail;
+    if (typeof data.error === 'string' && data.error) return data.error;
+    if (data.error && typeof data.error === 'object' && data.error.message) {
+      return String(data.error.message);
+    }
+  }
+  return text || `HTTP ${status}`;
+}
+
+async function postPageJudge(req, flightHandle) {
+  for (let attempt = 1; attempt <= PAGE_JUDGE_BUSY_ATTEMPTS; attempt += 1) {
+    if (!flightHandle.isCurrent() || flightHandle.signal.aborted) {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+    const res = await fetch(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      signal: flightHandle.signal,
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+    const retryAfterHeader = typeof res.headers?.get === 'function' ? res.headers.get('Retry-After') : '';
+    const delayMs = serviceLink.pageJudgeBusyDelayMs({
+      status: res.status,
+      data,
+      text,
+      retryAfterHeader,
+    });
+    if (delayMs != null && attempt < PAGE_JUDGE_BUSY_ATTEMPTS && flightHandle.isCurrent()) {
+      const waitMs = delayMs > 0 ? delayMs : 250;
+      pushLog('info', 'page_judge_busy', {
+        attempt,
+        status: res.status,
+        retryAfterMs: waitMs,
+      });
+      await sleepWithSignal(waitMs, flightHandle.signal);
+      continue;
+    }
+    if (!res.ok || delayMs != null) {
+      throw new Error(judgeFailureMessage(data, text, res.status));
+    }
+    if (!data || typeof data !== 'object') {
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+  throw new Error('page_judge_busy');
 }
 
 async function applyRuntimeSettings(settings) {
@@ -233,20 +315,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           model: body.model,
           hasApiKey: Boolean(req.headers['x-api-key']),
         });
-        const res = await fetch(req.url, {
-          method: 'POST',
-          headers: req.headers,
-          body: JSON.stringify(body),
-          signal: flightHandle.signal,
-        });
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          throw new Error(text || `HTTP ${res.status}`);
-        }
-        if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+        const data = await postPageJudge(req, flightHandle);
         if (!flightHandle.isCurrent()) {
           pushLog('info', 'page_judge_superseded', { gen: flightHandle.gen, requestId: data.requestId });
           sendResponse({ error: 'page_judge_superseded' });

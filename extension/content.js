@@ -1,5 +1,5 @@
 /**
- * Adgate 0.1.5 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
+ * Adgate 0.1.6 — JEV kind classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -16,11 +16,11 @@ const DEFAULTS = {
   maxElements: 24,
   serverUrl: 'https://www.dagote.ai/api/jev',
   apiKey: '',
-  model: 'jev-latest',
+  model: 'jev-tiny',
   ranks: null,
 };
 
-const CLIENT = 'extension-0.1.5';
+const CLIENT = 'extension-0.1.6';
 
 let suppressMutations = false;
 
@@ -943,7 +943,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.1.5-classify',
+    mode: '0.1.6-classify',
     forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,

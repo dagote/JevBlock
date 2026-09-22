@@ -14,11 +14,12 @@ const {
   parseModelsPayload,
   fetchModelList,
   redactSecret,
+  pageJudgeBusyDelayMs,
 } = require('./service-link.js');
 
 test('default service URL is Dagote hosted JEV', () => {
   assert.equal(DAGOTE_SERVER_URL, 'https://www.dagote.ai/api/jev');
-  assert.equal(DEFAULT_MODEL, 'jev-latest');
+  assert.equal(DEFAULT_MODEL, 'jev-tiny');
   assert.deepEqual(
     FALLBACK_MODELS.map((row) => row.id),
     ['jev-tiny', 'jev-latest', 'jev-3b'],
@@ -50,14 +51,14 @@ test('page-judge request sends explicit model and x-api-key', () => {
   assert.equal(JSON.stringify(req.body).includes('secret-key'), false);
 });
 
-test('blank api key is omitted and blank model falls back to jev-latest', () => {
+test('blank api key is omitted and blank model falls back to jev-tiny', () => {
   const req = buildPageJudgeRequest(
     { serverUrl: '', apiKey: '   ', model: '  ' },
     { page: { url: 'https://example.com/' }, elements: [] },
   );
   assert.equal(req.url, `${DAGOTE_SERVER_URL}/v1/page-judge`);
   assert.equal(Object.hasOwn(req.headers, 'x-api-key'), false);
-  assert.equal(req.body.model, 'jev-latest');
+  assert.equal(req.body.model, 'jev-tiny');
 });
 
 test('log request sends the key header and does not require model', () => {
@@ -81,7 +82,7 @@ test('migration upgrades empty or old LAN URL once and keeps a custom URL', () =
   });
   assert.equal(legacy.changed, true);
   assert.equal(legacy.patch.serverUrl, DAGOTE_SERVER_URL);
-  assert.equal(legacy.patch.model, 'jev-latest');
+  assert.equal(legacy.patch.model, 'jev-tiny');
   assert.equal(legacy.patch.apiKey, '');
   assert.equal(legacy.patch.uiRev, 3);
   assert.equal(Object.hasOwn(legacy.patch, 'forceHideCheats'), false);
@@ -108,9 +109,37 @@ test('migration upgrades empty or old LAN URL once and keeps a custom URL', () =
 
   const fresh = migrateStoredSettings({});
   assert.equal(fresh.patch.serverUrl, DAGOTE_SERVER_URL);
+  assert.equal(fresh.patch.model, 'jev-tiny');
   assert.equal(fresh.patch.forceHideCheats, false);
   assert.equal(fresh.patch.reviewMode, true);
   assert.equal(fresh.patch.uiRev, 3);
+
+  const keptLatest = migrateStoredSettings({
+    uiRev: 3,
+    serverUrl: DAGOTE_SERVER_URL,
+    apiKey: 'k',
+    model: 'jev-latest',
+  });
+  assert.equal(keptLatest.changed, false);
+  assert.equal(Object.hasOwn(keptLatest.patch, 'model'), false);
+
+  const keptLatestBeforeRev = migrateStoredSettings({
+    uiRev: 2,
+    serverUrl: DAGOTE_SERVER_URL,
+    apiKey: 'k',
+    model: 'jev-latest',
+  });
+  assert.equal(Object.hasOwn(keptLatestBeforeRev.patch, 'model'), false);
+  assert.equal(keptLatestBeforeRev.patch.uiRev, 3);
+
+  const blankAfterUpgrade = migrateStoredSettings({
+    uiRev: 3,
+    serverUrl: DAGOTE_SERVER_URL,
+    apiKey: 'k',
+    model: '   ',
+  });
+  assert.equal(blankAfterUpgrade.patch.model, 'jev-tiny');
+  assert.equal(Object.hasOwn(blankAfterUpgrade.patch, 'serverUrl'), false);
 });
 
 test('model discovery uses /models and a parent path only after 404', async () => {
@@ -192,7 +221,7 @@ test('redactSecret strips the api key and extension defaults name Dagote', () =>
     const defaults = src.match(/const DEFAULTS = \{[\s\S]*?\n\};/)?.[0] || '';
     assert.match(defaults, /serverUrl:\s*'https:\/\/www\.dagote\.ai\/api\/jev'/);
     assert.match(defaults, /apiKey:\s*''/);
-    assert.match(defaults, /model:\s*'jev-latest'/);
+    assert.match(defaults, /model:\s*'jev-tiny'/);
     assert.match(defaults, /uiRev:\s*3/);
     assert.equal(defaults.includes(OLD_LAN_SERVER_URL), false);
   }
@@ -201,10 +230,82 @@ test('redactSecret strips the api key and extension defaults name Dagote', () =>
   assert.match(html, /id="apiKey"/);
   assert.match(html, /id="model"/);
   assert.match(html, /Service URL/);
+  assert.match(html, /<option value="jev-tiny" selected>jev-tiny<\/option>/);
+  assert.equal(/<option value="jev-latest" selected>/.test(html), false);
+
+  const popup = fs.readFileSync(path.join(__dirname, 'popup.js'), 'utf8');
+  assert.equal(popup.includes('preferServerDefault: !hadModel'), false);
+  assert.match(popup, /refreshModels\(\{ preferServerDefault: false, quiet: true \}\)/);
 
   const background = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
   assert.match(background, /importScripts\(['"]service-link\.js['"]\)/);
   assert.match(background, /buildPageJudgeRequest/);
   assert.match(background, /buildLogRequest/);
+  assert.match(background, /pageJudgeBusyDelayMs/);
   assert.equal(/console\.log\([^)]*apiKey/.test(background), false);
+  const busyLog = background.match(/pushLog\('info', 'page_judge_busy', \{[\s\S]*?\}\)/);
+  assert.ok(busyLog);
+  assert.equal(busyLog[0].includes('apiKey'), false);
+  assert.equal(busyLog[0].includes('headers'), false);
+
+  const content = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
+  assert.match(content, /setTimeout\(\(\) => safeJudge\('boot'/);
+  assert.match(content, /safeJudge\('boot2'\)/);
+});
+
+test('Dagote 429 and busy replies wait for retryAfter', () => {
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 429,
+      data: { error: 'Already generating a reply', retryAfter: 3 },
+      text: '{"error":"Already generating a reply","retryAfter":3}',
+    }),
+    3000,
+  );
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 200,
+      data: { busy: true, error: 'Already generating a reply', retryAfter: 1.5 },
+    }),
+    1500,
+  );
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 503,
+      text: 'Already generating a reply',
+      retryAfterHeader: '4',
+    }),
+    4000,
+  );
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 429,
+      data: { error: { message: 'Already generating a reply', retryAfter: 2 } },
+      retryAfterHeader: '9',
+    }),
+    2000,
+  );
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 429,
+      data: { detail: 'Already generating a reply' },
+    }),
+    2000,
+  );
+  assert.equal(pageJudgeBusyDelayMs({ status: 429, data: { retryAfter: 9999 } }), 120000);
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 500,
+      data: { detail: 'model missing' },
+    }),
+    null,
+  );
+  assert.equal(
+    pageJudgeBusyDelayMs({
+      status: 200,
+      data: { elements: [{ text: 'Already generating a reply' }] },
+      text: 'Already generating a reply',
+    }),
+    null,
+  );
 });

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.1.5",
-  "description": "0.1.5 — Service URL defaults to Dagote hosted JEV; API key and explicit model",
+  "version": "0.1.6",
+  "description": "0.1.6 — Default scorer jev-tiny on Dagote; API key and explicit model",
   "permissions": [
     "storage",
     "activeTab",
