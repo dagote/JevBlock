@@ -1,5 +1,5 @@
 /**
- * Adgate 0.0.12 — page judge, block path, review log.
+ * Adgate 0.1.0 — JEV classify + user ranks; Extreme force-hide cheats opt-in.
  * Annotate chips stay off unless Advanced is enabled.
  */
 
@@ -11,12 +11,14 @@ const DEFAULTS = {
   showLabels: false,
   showPanel: false,
   extremeEarly: false,
-  uiRev: 1,
+  forceHideCheats: false,
+  uiRev: 2,
   maxElements: 24,
   serverUrl: 'http://192.168.0.119:8770',
+  ranks: null,
 };
 
-const CLIENT = 'extension-0.0.12';
+const CLIENT = 'extension-0.1.0';
 
 let suppressMutations = false;
 
@@ -627,15 +629,18 @@ function sendMessage(msg) {
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(null);
   const data = { ...DEFAULTS, ...stored };
-  if ((stored.uiRev || 0) >= 1) return data;
+  data.forceHideCheats = data.forceHideCheats === true;
+  data.ranks = globalThis.AdgateRanks?.normalizeRanks(data.ranks) || data.ranks;
+  if ((stored.uiRev || 0) >= 2) return data;
   const migrated = {
     showLabels: false,
     showPanel: false,
     reviewMode: true,
-    uiRev: 1,
+    forceHideCheats: false,
+    uiRev: 2,
   };
   await chrome.storage.sync.set(migrated);
-  return { ...data, ...migrated };
+  return { ...data, ...migrated, ranks: data.ranks };
 }
 
 async function rememberRun(run) {
@@ -661,7 +666,8 @@ async function runJudge(trigger) {
   const decisionRows = [];
   suppressMutations = true;
 
-  if (blockEnabled) {
+  if (blockEnabled && settings.forceHideCheats === true) {
+    // Legacy Extreme force_hide_* — opt-in only. Default product is JEV + ranks.
     decisionRows.push(...removeAdvertisementWidgets(document));
     decisionRows.push(...removeClbContainers(document));
     decisionRows.push(...removeAdComLinks(document));
@@ -706,15 +712,26 @@ async function runJudge(trigger) {
     let removed = false;
     let cascade = [];
     let before = null;
-    const forced = blockEnabled && globalThis.AdgateCandidates.isForcedHide(ser);
-    let action = j.action;
-    let reason = j.reason;
-    if (forced && action !== 'hide') {
+    const cheatForced =
+      blockEnabled &&
+      settings.forceHideCheats === true &&
+      globalThis.AdgateCandidates?.isForcedHide?.(ser);
+    const ranked = globalThis.AdgateRanks?.decideHide(settings, j) || {
+      hide: j.action === 'hide',
+      action: j.action,
+      reason: j.reason,
+      kind: j.kind || 'other',
+    };
+    let action = ranked.action || j.action;
+    let reason = ranked.reason || j.reason;
+    const kind = ranked.kind || j.kind || 'other';
+    if (cheatForced && action !== 'hide') {
       action = 'hide';
       reason = `client_${ser.discover || 'ad_slot'}`;
     }
-    if (blockEnabled && action === 'hide' && el) {
-      const outcome = hideEl(el, j.noul, forced || ser.discover);
+    const doHide = blockEnabled && (action === 'hide' || ranked.hide || cheatForced);
+    if (doHide && el) {
+      const outcome = hideEl(el, j.noul, cheatForced || ranked.hide);
       removed = outcome.removed;
       cascade = outcome.cascade;
       before = outcome.before;
@@ -744,10 +761,12 @@ async function runJudge(trigger) {
       role: ser.role || null,
       rect: ser.rect || null,
       text: ser.text || '',
+      nearbyLabel: ser.nearbyLabel || null,
       testId: ser.testId || null,
       fixedOrSticky: !!ser.fixedOrSticky,
       discover: ser.discover || '',
       noul: j.noul,
+      kind,
       action,
       reason,
       removed,
@@ -889,7 +908,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings().then((s) => {
   log('info', 'boot', {
-    mode: '0.0.12-review',
+    mode: '0.1.0-classify',
+    forceHideCheats: s.forceHideCheats === true,
     enabled: s.enabled !== false,
     blockEnabled: s.blockEnabled === true,
     reviewMode: s.reviewMode !== false,

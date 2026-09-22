@@ -80,11 +80,13 @@ function renderCard(row) {
   before.append(el('div', 'kicker', 'Before'));
   before.append(el('div', '', `${row.tag || 'node'} · ${row.id}`));
   before.append(el('div', 'meta', `Found via ${row.discover || 'unspecified'}`));
+  if (row.kind) before.append(el('div', 'meta', `Class ${row.kind}`));
   const bits = [];
   if (row.href) bits.push(`href ${row.href}`);
   if (row.src) bits.push(`src ${row.src}`);
   if ((row.classes || []).length) bits.push(`class ${(row.classes || []).join(' ')}`);
   if (row.idAttr) bits.push(`id ${row.idAttr}`);
+  if (row.nearbyLabel) bits.push(`nearby ${row.nearbyLabel}`);
   if (row.rect) bits.push(`${row.rect.w}×${row.rect.h} at ${row.rect.x},${row.rect.y}`);
   if (row.fixedOrSticky) bits.push('fixed/sticky');
   if (row.text) bits.push(row.text);
@@ -106,7 +108,15 @@ function renderCard(row) {
     row.removed ? 'Removed' : row.action === 'hide' ? 'Hide suggested' : 'Kept',
   );
   after.append(badge);
-  after.append(document.createTextNode(` ${row.action || '—'} · ${row.reason || 'no reason'}`));
+  const why = [
+    row.kind ? `class ${row.kind}` : null,
+    row.action || '—',
+    row.reason || 'no reason',
+    row.removed && String(row.reason || '').startsWith('rank_') ? 'user rank' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  after.append(document.createTextNode(` ${why}`));
   const parents = row.cascadeParents || [];
   if (parents.length) {
     const list = document.createElement('ul');

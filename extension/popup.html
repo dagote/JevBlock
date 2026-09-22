@@ -5,7 +5,7 @@
   <title>Adgate</title>
   <style>
     body {
-      margin: 0; padding: 12px; width: 380px;
+      margin: 0; padding: 12px; width: 400px;
       font: 13px/1.4 system-ui, sans-serif; color: #e8e8ef; background: #12121a;
     }
     h1 { font-size: 15px; margin: 0 0 4px; }
@@ -17,6 +17,8 @@
       width: 100%; box-sizing: border-box; padding: 6px 8px;
       border-radius: 6px; border: 1px solid #333; background: #0c0c12; color: #eee;
     }
+    .rank { display: grid; grid-template-columns: 1fr auto 72px; gap: 8px; align-items: center; margin: 6px 0; }
+    .rank input[type="number"] { width: 72px; }
     .actions { display: flex; gap: 6px; margin: 10px 0; }
     .actions button { flex: 1; border: 0; border-radius: 8px; padding: 8px; font-weight: 650; cursor: pointer; }
     #save { background: #2a2a36; color: #ddd; }
@@ -31,15 +33,26 @@
 </head>
 <body>
   <h1>Adgate <span id="ver" style="color:#888;font-weight:400"></span></h1>
-  <div class="sub">Review mode. Judge a page, then inspect removals without on-page % chips.</div>
+  <div class="sub">JEV classifies candidates. You set which classes Block may remove.</div>
 
   <div class="row"><span>Enabled</span><input id="enabled" type="checkbox" checked /></div>
-  <div class="row"><span>Block — remove ads and empty parents</span><input id="blockEnabled" type="checkbox" /></div>
+  <div class="row"><span>Block — remove by class ranks</span><input id="blockEnabled" type="checkbox" /></div>
   <div class="row"><span>Open review after Judge</span><input id="reviewMode" type="checkbox" checked /></div>
-  <label class="field">Hide when P ≥
+  <label class="field">Default hide when P ≥
     <input id="hideMin" type="number" min="0.05" max="0.99" step="0.05" value="0.75" />
   </label>
-  <div class="hint">Default 0.75. Scores from 0.45 up to that threshold stay in the review band and are not removed.</div>
+  <div class="hint">Used when a class has no override. Review band starts at 0.45.</div>
+
+  <details open>
+    <summary>Hide ranks (class + threshold)</summary>
+    <div class="hint">Enable a class, then set the noul floor for that class.</div>
+    <div class="rank"><span>ad</span><input id="rank_ad_on" type="checkbox" checked /><input id="rank_ad_min" type="number" min="0.05" max="0.99" step="0.05" value="0.75" /></div>
+    <div class="rank"><span>promo</span><input id="rank_promo_on" type="checkbox" checked /><input id="rank_promo_min" type="number" min="0.05" max="0.99" step="0.05" value="0.75" /></div>
+    <div class="rank"><span>unrelated_inject</span><input id="rank_unrelated_inject_on" type="checkbox" /><input id="rank_unrelated_inject_min" type="number" min="0.05" max="0.99" step="0.05" value="0.85" /></div>
+    <div class="rank"><span>donate_ask</span><input id="rank_donate_ask_on" type="checkbox" /><input id="rank_donate_ask_min" type="number" min="0.05" max="0.99" step="0.05" value="0.85" /></div>
+    <div class="rank"><span>tracking_chrome</span><input id="rank_tracking_chrome_on" type="checkbox" checked /><input id="rank_tracking_chrome_min" type="number" min="0.05" max="0.99" step="0.05" value="0.75" /></div>
+  </details>
+
   <label class="field">Server <input id="serverUrl" type="text" value="http://192.168.0.119:8770" /></label>
 
   <div class="actions">
@@ -55,8 +68,10 @@
     <div class="row"><span>On-page % chips</span><input id="showLabels" type="checkbox" /></div>
     <div class="row"><span>On-page data panel</span><input id="showPanel" type="checkbox" /></div>
     <div class="row"><span>Extreme early defenses</span><input id="extremeEarly" type="checkbox" /></div>
-    <div class="hint">Early defenses patch pop-unders and notification prompts, and declarativeNetRequest turns on with Block. Reload the tab after toggling.</div>
+    <div class="row"><span>Extreme force-hide cheats (legacy)</span><input id="forceHideCheats" type="checkbox" /></div>
+    <div class="hint">Cheats are Extreme-specific force_hide_* selectors. Off by default. Prefer JEV + ranks.</div>
   </details>
+  <script src="ranks.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

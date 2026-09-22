@@ -1,53 +1,63 @@
-# Adgate 0.0.0 — System One page judge
+# Adgate 0.1.0 — System One page classify + user ranks
 
 ## Idea
 
-Feed **page context** (not just one node) into System One, then ask:
+Feed **page context** and candidate elements into System One, then let the user decide what to hide by **class** and **score**.
 
 1. **What kind of site is this?** (`choice` → `site_type`)
-2. **For each candidate element:** P(it is an **ad or unrelated** to that site’s purpose) (`noul`)
+2. **For each candidate:**
+   - `noul` — P(ad or unrelated to that site’s purpose)
+   - `kind` — one of `main_content | ad | promo | unrelated_inject | donate_ask | tracking_chrome | nav_chrome | other`
+
+Block removals come from **JEV + user ranks**, not Extreme-specific `force_hide_*` selectors (those are opt-in cheats).
 
 ## Pipeline
 
 ```
-page excerpt + headings + url
+page { url, hostname, title, excerpt, headings }
         +
-candidate elements (Extreme Elementor slots, Advertisement labels, __clb / IAB iframes, ad-host href/src, VAST, blank html widgets, fixed overlays)
-Extension 0.0.12 / adgate 0.2.4. Block on force-hides Extreme ad slots before JEV, then collapses empty parent shells (`empty_parent`). Caution1.png is page content and is not removed.
+elements { id, tag, role, text, nearbyLabel, href, src, classes, rect, fixedOrSticky, ariaLabel, discover }
         │
         ▼
 POST /v1/page-judge  (adgate → jev-local)
         │
-        ├─ Step 1: site_type choice
-        └─ Step 2: per-element noul (with site_type in state)
+        ├─ site_type choice
+        └─ per element: noul + kind choice
         │
         ▼
-action: hide if P ≥ hideMin (default 0.75)
-        review if 0.45 ≤ P < hideMin
-        allow otherwise
+client ranks: hide if kind enabled and noul ≥ that class hideMin
         ▼
 block on → remove hide nodes, then empty parent shells
-decision log (JSON + JSONL) for review mode
+decision log for review mode
 ```
 
-## Honest limits (local jev-local 1.5B)
+## Element kinds (`kind`)
 
-The open-weight stand-in often mis-labels mail as `docs_app` and under-scores AOL `mail-us` iframes.  
-Server applies **transparent priors** (logged in `reason`):
+| kind | Meaning |
+|------|---------|
+| `main_content` | Primary content the user came for |
+| `ad` | Advertisement / sponsored unit |
+| `promo` | First-party promo / upsell |
+| `unrelated_inject` | Third-party inject unrelated to purpose |
+| `donate_ask` | Donation / tip ask |
+| `tracking_chrome` | Tracking / beacon chrome |
+| `nav_chrome` | Primary navigation the user needs |
+| `other` | Unclear |
 
-- hostname `mail.aol.com` / `mail.yahoo.com` → force `site_type=mail` when model misses
-- `canyoublockit.com` `/extreme-test` labeled `docs_app` → `marketing` if that probability is at least `other`, otherwise `other` (`reason` on the site-type log: `extreme_test_path`)
-- `mail-us` iframe on a mail site → `s1_plus_mail_us_prior`, floor 0.9
-- known ad-host `src` or `href` (including `ad.com`, not lookalikes like `head.com`) → `s1_plus_adhost_prior`, floor 0.9
-- `role=advertisement` or an ad-like `aria-label` → skip the model, `aria_ad` at 0.95
-- fixed/sticky plus dialog role or interstitial / special-offer / “click here” copy → `s1_plus_overlay_prior`, floor 0.9
-- `notification-permission` or “wants to … notifications” → `s1_plus_push_permission_prior`, floor 0.9
-- client `discover=blank_html_widget` (empty Elementor html widget) → `blank_ad_slot`, floor 0.9, skips the model
-- client `discover=ad_label` (widget whose only visible text is “Advertisement”) → `ad_label`, floor 0.9, skips the model
+## User ranks (popup)
 
-Real hosted Jev should make those priors unnecessary; keep them labeled so we can turn them off.
+Defaults: hide **ad**, **promo**, and **tracking_chrome** at noul ≥ 0.75. **unrelated_inject** and **donate_ask** are off (enable + set threshold to use). Persist in `chrome.storage.sync.ranks`.
 
-## Install
+Decision reason when a rank fires: `rank_<kind>` (shown in the review UI).
 
-`http://192.168.0.119:8080/adgate-extension/adgate-v0.0.0.zip`  
-Chrome card must show **Adgate / 0.0.0**. Remove all older Adgate builds first.
+## Extreme force-hide cheats (legacy)
+
+`forceHideCheats` defaults **false**. When on, Block also runs Extreme-specific removers (`force_hide_ad_host_widget`, `force_hide_clb_container`, …). That path is for debugging Extreme markup only — not the product.
+
+## Transparent priors (server)
+
+Labeled floors may still raise a low JEV score (e.g. `aria_ad`, general ad-host `src`/`href`). Extreme Elementor blank/ad_label short-circuits that **skipped** JEV are retired; those nodes are scored by JEV.
+
+## Versions
+
+Extension **0.1.0**. Server **0.3.0**. Empty-parent collapse and optional DNR remain as plumbing.

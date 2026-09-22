@@ -298,6 +298,12 @@
       const tag = String(el.tagName || '').toLowerCase();
       if (['style', 'link', 'meta', 'noscript', 'html', 'body', 'head'].includes(tag)) return;
       if (tag !== 'script' && isLandmark(el)) return;
+      // Prefer content boxes over primary nav CTAs / menu chrome.
+      if (el.closest && el.closest('nav, header, .main-header-bar, #primary-site-navigation, .menu-link')) {
+        if (!FORCED_HIDE.has(discover) && discover !== 'fixed_overlay' && discover !== 'push_permission') {
+          return;
+        }
+      }
       const prev = found.get(el);
       if (prev && FORCED_HIDE.has(prev.discover) && !FORCED_HIDE.has(discover)) return;
       if (!prev || pri > prev.pri) {
@@ -452,6 +458,16 @@
         src = evidence;
       }
     }
+    let nearbyLabel = null;
+    const prev = el.previousElementSibling;
+    if (prev) {
+      const labelText = visibleText(prev);
+      if (labelText && labelText.length <= 60) nearbyLabel = labelText;
+    }
+    if (!nearbyLabel && el.parentElement) {
+      const parentText = visibleText(el.parentElement);
+      if (parentText && parentText.length <= 40 && parentText !== text) nearbyLabel = parentText;
+    }
     return {
       id,
       tag,
@@ -460,6 +476,7 @@
       role: el.getAttribute('role'),
       ariaLabel: el.getAttribute('aria-label'),
       text,
+      nearbyLabel,
       href: href || null,
       src: src || null,
       testId: el.getAttribute('data-test-id'),

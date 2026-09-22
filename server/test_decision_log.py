@@ -33,6 +33,15 @@ class DecisionLogTests(unittest.TestCase):
 		self.assertEqual(app.resolve_path("/tmp/custom.jsonl", log_path), Path("/tmp/custom.jsonl"))
 		self.assertEqual(app.resolve_path(None, log_path), log_path)
 
+	def test_element_kinds_and_judgment_kind_field(self) -> None:
+		self.assertIn("ad", app.ELEMENT_KINDS)
+		self.assertIn("donate_ask", app.ELEMENT_KINDS)
+		row = app.ElementJudgment(id="e0", noul=0.9, action="hide", reason="s1_ad_or_unrelated", kind="ad")
+		self.assertEqual(row.kind, "ad")
+		plain = app.ElementJudgment(id="e1", noul=0.1, action="allow")
+		self.assertEqual(plain.kind, "other")
+		self.assertEqual(app.SERVER_VERSION, "0.3.0")
+
 	def test_review_band(self) -> None:
 		self.assertEqual(app.action_for_noul(0.75, 0.75), "hide")
 		self.assertEqual(app.action_for_noul(0.93, 0.75), "hide")

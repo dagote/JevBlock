@@ -6,15 +6,44 @@ const DEFAULTS = {
   showLabels: false,
   showPanel: false,
   extremeEarly: false,
-  uiRev: 1,
+  forceHideCheats: false,
+  uiRev: 2,
   serverUrl: 'http://192.168.0.119:8770',
+  ranks: null,
 };
-const NEED = '0.0.12';
+const NEED = '0.1.0';
+const RANK_KEYS = ['ad', 'promo', 'unrelated_inject', 'donate_ask', 'tracking_chrome'];
 const $ = (id) => document.getElementById(id);
 
 function setStatus(text, cls) {
   $('status').textContent = text;
   $('status').className = cls || '';
+}
+
+function defaultRanks() {
+  return globalThis.AdgateRanks?.normalizeRanks(null) || {};
+}
+
+function fillRanks(ranks) {
+  const normalized = globalThis.AdgateRanks?.normalizeRanks(ranks) || defaultRanks();
+  for (const key of RANK_KEYS) {
+    const row = normalized[key] || {};
+    const on = $(`rank_${key}_on`);
+    const min = $(`rank_${key}_min`);
+    if (on) on.checked = row.enabled === true;
+    if (min) min.value = row.hideMin ?? 0.75;
+  }
+}
+
+function readRanks() {
+  const ranks = defaultRanks();
+  for (const key of RANK_KEYS) {
+    ranks[key] = {
+      enabled: $(`rank_${key}_on`)?.checked === true,
+      hideMin: Number($(`rank_${key}_min`)?.value) || ranks[key]?.hideMin || 0.75,
+    };
+  }
+  return ranks;
 }
 
 function render(scan) {
@@ -43,19 +72,16 @@ async function load() {
   if (manifest.version !== NEED) setStatus(`Wrong build v${manifest.version}. Need v${NEED}.`, 'bad');
   const stored = await chrome.storage.sync.get(null);
   const data = { ...DEFAULTS, ...stored };
-  if (!stored.uiRev) {
-    data.showLabels = false;
-    data.showPanel = false;
-    data.reviewMode = data.reviewMode !== false;
-  }
   $('enabled').checked = data.enabled !== false;
   $('blockEnabled').checked = data.blockEnabled === true;
   $('reviewMode').checked = data.reviewMode !== false;
   $('showLabels').checked = data.showLabels === true;
   $('showPanel').checked = data.showPanel === true;
   $('extremeEarly').checked = data.extremeEarly === true;
+  $('forceHideCheats').checked = data.forceHideCheats === true;
   $('hideMin').value = data.hideMin ?? 0.75;
   $('serverUrl').value = data.serverUrl || DEFAULTS.serverUrl;
+  fillRanks(data.ranks);
   render((await chrome.storage.local.get(['adgateLastRun'])).adgateLastRun);
 }
 
@@ -67,9 +93,11 @@ function readSettings() {
     showLabels: $('showLabels').checked,
     showPanel: $('showPanel').checked,
     extremeEarly: $('extremeEarly').checked,
+    forceHideCheats: $('forceHideCheats').checked,
     hideMin: Number($('hideMin').value) || 0.75,
     serverUrl: $('serverUrl').value.trim().replace(/\/$/, ''),
-    uiRev: 1,
+    ranks: readRanks(),
+    uiRev: 2,
   };
 }
 
@@ -98,11 +126,16 @@ $('scan').onclick = async () => {
     render(result);
     const removed = result.summary?.removed ?? 0;
     const parents = result.summary?.cascadeRemoved ?? 0;
-    setStatus(`Judged. ${removed} removed, ${parents} empty parents.`, 'ok');
+    setStatus(
+      settings.blockEnabled
+        ? `Done. Removed ${removed} · empty parents ${parents}.`
+        : `Done. ${result.summary?.candidates ?? 0} candidates (Block off).`,
+      'ok',
+    );
     if (settings.reviewMode !== false) await openReview();
   } catch (error) {
-    setStatus(`${error.message || error}\nRefresh the tab, then try again.`, 'bad');
+    setStatus(String(error.message || error), 'bad');
   }
 };
 
-load();
+load().catch((error) => setStatus(String(error), 'bad'));

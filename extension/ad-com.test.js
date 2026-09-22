@@ -1,3 +1,4 @@
+/** Legacy Extreme force_hide_* helpers. Product Block path requires forceHideCheats. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

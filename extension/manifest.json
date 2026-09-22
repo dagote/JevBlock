@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adgate",
-  "version": "0.0.12",
-  "description": "0.0.12 — Block collapses empty parents after force-hide",
+  "version": "0.1.0",
+  "description": "0.1.0 — JEV classify + user ranks; Extreme force-hide cheats opt-in",
   "permissions": [
     "storage",
     "activeTab",
@@ -46,6 +46,7 @@
         "empty-parent.js",
         "decision-log.js",
         "candidates.js",
+        "ranks.js",
         "logger.js",
         "content.js"
       ],

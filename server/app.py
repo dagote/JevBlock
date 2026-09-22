@@ -21,7 +21,7 @@ JEV_URL = os.getenv("ADGATE_JEV_URL", "http://127.0.0.1:8765").rstrip("/")
 MAX_ELEMENTS = int(os.getenv("ADGATE_MAX_ELEMENTS", "24"))
 SERVER_DIR = Path(__file__).resolve().parent
 REVIEW_MIN = 0.45
-SERVER_VERSION = "0.2.4"
+SERVER_VERSION = "0.3.0"
 
 
 def resolve_path(env_value: str | None, default: Path) -> Path:
@@ -693,6 +693,17 @@ SITE_TYPES = {
 	"other": "None of the above / unclear",
 }
 
+ELEMENT_KINDS = {
+	"main_content": "Primary page content the user came for",
+	"ad": "Advertisement or sponsored unit",
+	"promo": "First-party promo / upsell / special offer chrome",
+	"unrelated_inject": "Third-party inject unrelated to the page purpose",
+	"donate_ask": "Donation / tip / support ask",
+	"tracking_chrome": "Tracking, beacon, or measurement chrome",
+	"nav_chrome": "Primary navigation or site chrome the user needs",
+	"other": "None of the above / unclear",
+}
+
 
 class PageInfo(BaseModel):
 	url: str = ""
@@ -716,6 +727,7 @@ class PageElement(BaseModel):
 	rect: dict[str, float] | None = None
 	fixedOrSticky: bool = False
 	discover: str | None = None
+	nearbyLabel: str | None = None
 
 
 class PageJudgeRequest(BaseModel):
@@ -732,6 +744,7 @@ class ElementJudgment(BaseModel):
 	noul: float
 	action: Literal["hide", "review", "allow"]
 	reason: str = "s1_ad_or_unrelated"
+	kind: str = "other"
 
 
 class PageJudgeResponse(BaseModel):
@@ -798,6 +811,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			"rect": el.rect,
 			"fixedOrSticky": el.fixedOrSticky,
 			"discover": el.discover,
+			"nearbyLabel": ((el.nearbyLabel or "")[:80] or None),
 			"hint": hint,
 		}
 
@@ -882,22 +896,20 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 	for el in elements:
 		noul = 0.0
 		reason = "s1_ad_or_unrelated"
+		kind = "other"
 		aria = aria_ad_judgment(el)
-		blank = blank_slot_judgment(el)
-		label = ad_label_judgment(el)
+		# Extreme blank/ad_label short-circuits that skip JEV are retired for the
+		# product path. JEV scores them; labeled priors may still raise a floor.
 		if aria is not None:
 			noul, reason = aria
-		elif blank is not None:
-			noul, reason = blank
-		elif label is not None:
-			noul, reason = label
+			kind = "ad"
 		else:
 			try:
 				payload = _jev(
 					{
 						"task": (
 							"Score whether this DOM element is an ad or unrelated chrome "
-							"versus necessary UI/content for the known site type."
+							"versus necessary UI/content for the known site type, and classify it."
 						),
 						"page": page_short,
 						"site_type": site_type,
@@ -908,7 +920,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 							"type": "noul",
 							"instructions": (
 								f"This page was classified as site type `{site_type}`. "
-								f"Look at state.element. "
+								f"Look at state.element (tag, text, href, src, role, rect, nearbyLabel). "
 								f"Is this element an advertisement, sponsored/promo unit, or otherwise "
 								f"unrelated to a `{site_type}` page's primary purpose "
 								f"(ad rail, tracking iframe, junk chrome)?"
@@ -917,12 +929,26 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 								"true": "Ad, sponsor, promo, tracking iframe, or unrelated chrome",
 								"false": f"Primary content or necessary UI for a {site_type} page",
 							},
-						}
+						},
+						f"{el.id}__kind": {
+							"type": "choice",
+							"instructions": (
+								"Classify state.element for a product that lets users hide ads, "
+								"promos, unrelated injects, and donate asks by class. "
+								"Use main_content or nav_chrome when the node is needed for the page."
+							),
+							"criteria": ELEMENT_KINDS,
+						},
 					},
 				)
 				jev_model = payload.get("model") or jev_model
-				ans = (payload.get("answers") or {}).get(el.id) or {}
+				answers = payload.get("answers") or {}
+				ans = answers.get(el.id) or {}
 				noul = float(ans.get("noul", 0.0))
+				kind_ans = answers.get(f"{el.id}__kind") or {}
+				kind = str(kind_ans.get("choice") or "other")
+				if kind not in ELEMENT_KINDS:
+					kind = "other"
 			except Exception as e:
 				msg = str(e)
 				skipped += 1
@@ -938,13 +964,18 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 					reason=reason,
 				)
 				noul = 0.0
+				kind = "other"
 
 		noul, reason = apply_element_priors(el, noul, site_type, reason)
+		if reason == "aria_ad" and kind == "other":
+			kind = "ad"
 
 		action = action_for_noul(noul, hide_min)
 
 		judgments.append(
-			ElementJudgment(id=el.id, noul=round(noul, 4), action=action, reason=reason)
+			ElementJudgment(
+				id=el.id, noul=round(noul, 4), action=action, reason=reason, kind=kind
+			)
 		)
 		log_event(
 			"page_judge_element",
@@ -953,6 +984,7 @@ def page_judge(req: PageJudgeRequest) -> PageJudgeResponse:
 			noul=round(noul, 4),
 			action=action,
 			reason=reason,
+			kind=kind,
 			tag=el.tag,
 			src=(el.src or "")[:100],
 			discover=el.discover,

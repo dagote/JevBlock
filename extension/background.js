@@ -1,4 +1,4 @@
-/** Adgate 0.0.12 — service worker (only place that fetch()es LAN HTTP). */
+/** Adgate 0.1.0 — service worker (only place that fetch()es LAN HTTP). */
 
 const DEFAULTS = {
   enabled: true,
@@ -8,12 +8,13 @@ const DEFAULTS = {
   showLabels: false,
   showPanel: false,
   extremeEarly: false,
-  uiRev: 1,
+  forceHideCheats: false,
+  uiRev: 2,
   maxElements: 24,
   serverUrl: 'http://192.168.0.119:8770',
 };
 
-const VERSION = '0.0.12';
+const VERSION = '0.1.0';
 const RULESET_ID = 'ad_hosts';
 const EARLY_ID = 'adgate-early';
 const logBuffer = [];

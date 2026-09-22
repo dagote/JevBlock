@@ -40,11 +40,13 @@
       fixedOrSticky: !!row.fixedOrSticky,
       discover: row.discover || '',
       noul: row.noul,
+      kind: row.kind || 'other',
       action: row.action,
       reason: row.reason || '',
       removed: !!row.removed,
       cascadeParents: (row.cascadeParents || []).map(normalizeParent),
       before: row.before || null,
+      nearbyLabel: row.nearbyLabel || null,
     };
   }
 
